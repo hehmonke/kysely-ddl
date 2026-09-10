@@ -1,0 +1,79 @@
+{
+  "name": "kysely-ddl",
+  "version": "0.1.0",
+  "description": "PostgreSQL schema as TypeScript code: SQL migrations from snapshot diffs, Kysely table types and a migration runner",
+  "keywords": [
+    "postgres",
+    "postgresql",
+    "kysely",
+    "migrations",
+    "schema",
+    "ddl",
+    "schema-as-code",
+    "bun",
+    "typescript"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hehmonke/kysely-ddl.git"
+  },
+  "homepage": "https://github.com/hehmonke/kysely-ddl#readme",
+  "bugs": {
+    "url": "https://github.com/hehmonke/kysely-ddl/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./kysely": {
+      "types": "./dist/kysely/index.d.ts",
+      "default": "./dist/kysely/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "test": "bun test",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "smoke:node": "node scripts/smoke-node.mjs",
+    "check": "bun run typecheck && bun run lint && bun test && bun run build",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down -v",
+    "prepublishOnly": "bun run check"
+  },
+  "peerDependencies": {
+    "kysely": ">=0.28"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "^1.80.0",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/bun": "^1.4.0",
+    "@types/node": "^26.4.0",
+    "@types/pg": "^8.23.1",
+    "eslint-plugin-perfectionist": "^5.10.1",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "kysely": "^0.29.5",
+    "oxlint": "^1.80.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "pg": "^8.23.0",
+    "typescript": "^7.0.2"
+  }
+}

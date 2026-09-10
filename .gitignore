@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tgz
+
+# local .npmrc with registry tokens
+.npmrc
+
+.idea/
+.vscode/
+.DS_Store
