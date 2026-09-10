@@ -429,8 +429,9 @@ Without `DATABASE_URL` the integration tests are skipped, the unit tests always
 run. Type-level checks live in `test/types.test-d.ts` and are read by `tsc` only.
 
 Releases are tagged `vX.Y.Z`, matching `version` in `package.json`: GitHub
-Actions runs the checks and does `npm publish` with provenance. It needs the
-`NPM_TOKEN` secret in the repository settings.
+Actions runs the checks and does `npm publish` with provenance. Authentication is
+npm trusted publishing (OIDC) configured on npmjs.com for this repository and
+the `publish.yml` workflow, so no token secret is needed.
 
 ## License
 

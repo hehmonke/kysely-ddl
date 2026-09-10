@@ -1,6 +1,9 @@
 # Publishes to npm on a vX.Y.Z tag. The tag must match version in package.json.
 # prepublishOnly runs typecheck, lint, tests (postgres needed) and the build.
-# Needs the NPM_TOKEN secret: a granular access token with publish rights for the package.
+#
+# Auth: npm trusted publishing (OIDC). On npmjs.com the package trusts
+# hehmonke/kysely-ddl with this workflow file (publish.yml), so no token secret
+# is needed. Trusted publishing requires npm >= 11.5.1, hence the upgrade step.
 name: Publish
 
 on:
@@ -9,7 +12,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # provenance
+  id-token: write # OIDC token for trusted publishing and provenance
 
 env:
   DATABASE_URL: postgres://postgres:postgres@localhost:5432/kysely_ddl
@@ -40,9 +43,9 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      - name: npm with trusted publishing support
+        run: npm install -g npm@latest && npm --version
       - name: Tag matches version
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
       - run: bun install --frozen-lockfile
       - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
