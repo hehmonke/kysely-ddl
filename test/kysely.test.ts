@@ -7,7 +7,7 @@ import { CamelCasePlugin, type Dialect, type InsertObject, Kysely, PostgresDiale
 import { Migrator } from 'kysely/migration';
 import pg from 'pg';
 
-import { defineTable, ref } from '../src/index.ts';
+import { defineTable, NO_TRANSACTION_MARKER, ref } from '../src/index.ts';
 import {
   createMigrator,
   type inferKyselyDatabase,
@@ -19,7 +19,7 @@ import {
 } from '../src/kysely/index.ts';
 
 import { BunSqlDialect } from './helpers/bun-dialect.ts';
-import { ADMIN_URL, createTempDatabase, tableNames, type TempDatabase } from './helpers/database.ts';
+import { ADMIN_URL, createTempDatabase, query, tableNames, type TempDatabase } from './helpers/database.ts';
 import { addMigration, documentTable, type Profile, schema, ticketTable, userTable } from './helpers/schema.ts';
 
 type DB = inferKyselyDatabase<typeof schema>;
@@ -278,7 +278,7 @@ for (const { label, create } of dialects) {
 // ── CamelCasePlugin: camelCase keys in the types, snake_case in SQL ──────────
 
 const auditLogTable = defineTable({
-  tableName: 'audit_log',
+  name: 'audit_log',
   columns: t => ({
     id: t.integer().generatedAlwaysAsIdentity(),
     userId: t.uuid().notNull(),
@@ -335,6 +335,60 @@ for (const { label, create } of dialects) {
 
       const compiled = db.selectFrom('auditLog').select(['auditLog.userId', 'auditLog.happenedAt']).compile();
       expect(compiled.sql).toBe('select "audit_log"."user_id", "audit_log"."happened_at" from "audit_log"');
+    });
+  });
+}
+
+// ── --> no-transaction through Kysely's Migrator ─────────────────────────────
+
+for (const { label, create } of dialects) {
+  describeDb(`${label}: sqlFileMigrationProvider and ${NO_TRANSACTION_MARKER}`, () => {
+    let db: Kysely<DB>;
+    let init: string;
+    const index = '99990101000000_user_balance_idx';
+
+    beforeEach(() => {
+      db = new Kysely<DB>({ dialect: create(tempDb.url) });
+      init = addMigration(dir, 'init', [userTable]);
+      fs.writeFileSync(
+        path.join(dir, `${index}.sql`),
+        `${NO_TRANSACTION_MARKER}\ncreate index concurrently user_balance_idx on "user" (balance);\n`,
+      );
+    });
+
+    afterEach(async () => {
+      await db.destroy();
+    });
+
+    test('the marker becomes config: { transaction: false }, the field Kysely 0.30 reads; other migrations have no config', async () => {
+      const migrations = await sqlFileMigrationProvider(dir).getMigrations();
+
+      expect(Object.keys(migrations)).toEqual([init, index]);
+      expect(migrations[init]).not.toHaveProperty('config');
+      expect(migrations[index]).toHaveProperty('config', { transaction: false });
+    });
+
+    test('inside the Migrator transaction the marked migration refuses to run and names the fix', async () => {
+      const migrator = new Migrator({ db, provider: sqlFileMigrationProvider(dir) });
+      const { error, results } = await migrator.migrateToLatest();
+
+      expect(String(error)).toMatch(/no-transaction/);
+      expect(String(error)).toMatch(/per-migration/);
+      expect(results?.map(result => result.status)).toEqual(['Success', 'Error']);
+      // the whole run is one transaction, so the first migration was rolled back too
+      expect(await tableNames(tempDb.url)).toEqual(['kysely_migration', 'kysely_migration_lock']);
+    });
+
+    test('without the Migrator transaction the marked migration builds the index', async () => {
+      const migrator = new Migrator({ db, provider: sqlFileMigrationProvider(dir), disableTransactions: true });
+      const { error } = await migrator.migrateToLatest();
+
+      expect(error).toBeUndefined();
+      const indexes = await query<{ indexname: string }>(
+        tempDb.url,
+        `select indexname from pg_indexes where indexname = 'user_balance_idx'`,
+      );
+      expect(indexes).toHaveLength(1);
     });
   });
 }

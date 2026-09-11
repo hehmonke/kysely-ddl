@@ -21,14 +21,17 @@
  *
  * On transactions: on postgres Kysely runs the WHOLE run in one transaction by
  * default, DDL is transactional there, so a failing migration rolls back all the
- * previous ones from the same run. It is disabled with
- * `new Migrator({ ..., disableTransactions: true })`; that is needed for
- * operations postgres forbids inside a transaction (`CREATE INDEX CONCURRENTLY`
- * and the like).
+ * previous ones from the same run. A migration with `--> no-transaction` in its
+ * header gets `config: { transaction: false }`, which Kysely 0.30+ honors under
+ * `new Migrator({ ..., transactionMode: 'per-migration' })`: every migration in
+ * its own transaction, the marked one without. Older Kysely ignores `config`, so
+ * the marked migration checks that it is not inside a transaction and fails with
+ * a clear error instead of a postgres one; there the only way out is
+ * `disableTransactions: true` for the whole run.
  */
 import { type Kysely, sql } from 'kysely';
 
-import { listMigrations, readStatements } from '../migrator/store.ts';
+import { listMigrations, NO_TRANSACTION_MARKER, readMigration } from '../migrator/store.ts';
 
 import type { Migration, MigrationProvider } from 'kysely/migration';
 
@@ -44,6 +47,11 @@ export interface SqlMigrationProviderOptions {
    * written by hand and wired through your own provider.
    */
   readonly onDown?: 'throw' | 'skip';
+}
+
+/** `Migration` plus the `config` field Kysely 0.30 reads; older versions ignore it. */
+interface SqlMigration extends Migration {
+  readonly config?: { readonly transaction: false };
 }
 
 /**
@@ -62,14 +70,26 @@ export function sqlFileMigrationProvider(
       const migrations: Record<string, Migration> = {};
 
       for (const name of listMigrations(dir)) {
-        migrations[name] = {
+        const file = readMigration(dir, name);
+
+        const migration: SqlMigration = {
           async up(db: Kysely<unknown>): Promise<void> {
-            // one statement at a time: the driver does not trip over
-            // multi-statement text, and an error points at a specific query
-            for (const statement of readStatements(dir, name)) {
+            if (!file.transaction && db.isTransaction) {
+              throw new Error(
+                `${name} is marked "${NO_TRANSACTION_MARKER}" but the Migrator runs it inside a transaction. ` +
+                  "Kysely 0.30+: new Migrator({ ..., transactionMode: 'per-migration' }); older Kysely: " +
+                  "disableTransactions: true; or kysely-ddl's createMigrator({ ..., transaction: 'each' }).",
+              );
+            }
+
+            // chunk by chunk: a plain file is one chunk, a file with
+            // `--> statement-breakpoint` several; CONCURRENTLY statements must travel alone
+            for (const statement of file.statements) {
               await sql.raw(statement).execute(db);
             }
           },
+          // only when marked: in Kysely's other transaction modes an explicit value is an error
+          ...(file.transaction ? {} : { config: { transaction: false as const } }),
           ...(onDown === 'throw'
             ? {
                 down(): Promise<void> {
@@ -83,6 +103,8 @@ export function sqlFileMigrationProvider(
               }
             : {}),
         };
+
+        migrations[name] = migration;
       }
 
       return migrations;

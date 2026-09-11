@@ -10,7 +10,7 @@ import {
 } from '../../src/index.ts';
 
 export const userTable = defineTable({
-  tableName: 'user',
+  name: 'user',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`),
     nickname: t.varchar().notNull(),
@@ -22,7 +22,7 @@ export const userTable = defineTable({
 });
 
 export const userTableV2 = defineTable({
-  tableName: 'user',
+  name: 'user',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`),
     nickname: t.varchar().notNull(),
@@ -35,7 +35,7 @@ export const userTableV2 = defineTable({
 });
 
 export const ticketTable = defineTable({
-  tableName: 'ticket',
+  name: 'ticket',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`),
     userId: t.uuid().notNull(),
@@ -45,8 +45,32 @@ export const ticketTable = defineTable({
   foreignKeys: [{ columns: ['userId'], references: ref(userTable, ['id']), onDelete: 'cascade' }],
 });
 
-/** The next migration, diffed against the snapshot in the folder. */
+/** `ticket` with an index built concurrently: the generator writes it as a separate migration. */
+export const ticketTableIndexed = defineTable({
+  name: 'ticket',
+  columns: t => ({
+    id: t.uuid().notNull().default(sql`gen_random_uuid()`),
+    userId: t.uuid().notNull(),
+    status: t.enum(['new', 'closed']).notNull(),
+  }),
+  primaryKey: { columns: ['id'] },
+  indexes: [{ columns: ['userId'], concurrently: true }],
+  foreignKeys: [{ columns: ['userId'], references: ref(userTable, ['id']), onDelete: 'cascade' }],
+});
+
+/** The next migration, diffed against the snapshot in the folder. Exactly one file is expected. */
 export function addMigration(dir: string, name: string, tables: readonly AnyTable[]): string {
+  const names = addMigrations(dir, name, tables);
+
+  if (names.length !== 1) {
+    throw new Error(`addMigration: expected one file, got ${names.join(', ')}; use addMigrations`);
+  }
+
+  return names[0]!;
+}
+
+/** The same, returning every file written: two when there are concurrent indexes. */
+export function addMigrations(dir: string, name: string, tables: readonly AnyTable[]): string[] {
   return writeMigration(dir, name, generateMigration(tables, readLatestSnapshot(dir)));
 }
 
@@ -57,7 +81,7 @@ export interface Profile {
 
 /** jsonb in all its forms, for checking driver differences. */
 export const documentTable = defineTable({
-  tableName: 'document',
+  name: 'document',
   columns: t => ({
     id: t.integer().generatedAlwaysAsIdentity(),
     label: t.varchar().notNull(),

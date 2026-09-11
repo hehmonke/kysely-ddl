@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   buildSnapshot,
+  type ColumnBuilders,
   defineTable,
   diffSnapshots,
   EMPTY_SNAPSHOT,
@@ -12,7 +13,7 @@ import {
 } from '../src/index.ts';
 
 const userTable = defineTable({
-  tableName: 'user',
+  name: 'user',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`),
     createdAt: t.timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -26,7 +27,7 @@ const userTable = defineTable({
 });
 
 const sessionTable = defineTable({
-  tableName: 'session',
+  name: 'session',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`),
     userId: t.uuid().notNull(),
@@ -51,7 +52,7 @@ describe('buildSnapshot', () => {
       ],
       primaryKey: { name: 'user_pk', columns: ['id'] },
       uniques: [],
-      indexes: [{ name: 'user_nickname_idx', unique: true, columns: ['nickname'], where: null }],
+      indexes: [{ name: 'user_nickname_idx', unique: true, columns: ['nickname'], where: null, concurrently: false }],
       foreignKeys: [],
       checks: [
         { name: 'user_status_check', expression: `"status" in ('active', 'banned')` },
@@ -61,7 +62,7 @@ describe('buildSnapshot', () => {
   });
 
   test('an array shows up in the type as `[]`', () => {
-    const table = defineTable({ tableName: 't', columns: t => ({ tags: t.varchar().array() }) });
+    const table = defineTable({ name: 't', columns: t => ({ tags: t.varchar().array() }) });
     expect(buildSnapshot([table]).tables[0]?.columns[0]?.type).toBe('varchar[]');
   });
 
@@ -116,7 +117,7 @@ describe('diffSnapshots: order and kinds of changes', () => {
   const before = buildSnapshot([userTable, sessionTable]);
 
   const userV2 = defineTable({
-    tableName: 'user',
+    name: 'user',
     columns: t => ({
       id: t.uuid().notNull().default(sql`gen_random_uuid()`),
       createdAt: t.timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -157,9 +158,9 @@ DROP TABLE "session";
   });
 
   test('alterColumn prints one ALTER per difference', () => {
-    const v1 = buildSnapshot([defineTable({ tableName: 't', columns: t => ({ a: t.integer() }) })]);
+    const v1 = buildSnapshot([defineTable({ name: 't', columns: t => ({ a: t.integer() }) })]);
     const v2 = buildSnapshot([
-      defineTable({ tableName: 't', columns: t => ({ a: t.bigint().notNull().default(0).generatedAlwaysAsIdentity() }) }),
+      defineTable({ name: 't', columns: t => ({ a: t.bigint().notNull().default(0).generatedAlwaysAsIdentity() }) }),
     ]);
     expect(renderChanges(diffSnapshots(v1, v2))).toBe(`ALTER TABLE "t" ALTER COLUMN "a" TYPE bigint;
 ALTER TABLE "t" ALTER COLUMN "a" SET DEFAULT 0;
@@ -174,10 +175,10 @@ ALTER TABLE "t" ALTER COLUMN "a" DROP IDENTITY;
   });
 
   test('a new fk on an existing table goes last, after the indexes', () => {
-    const parent = defineTable({ tableName: 'p', columns: t => ({ id: t.uuid().notNull() }), primaryKey: { columns: ['id'] } });
-    const childV1 = defineTable({ tableName: 'c', columns: t => ({ pId: t.uuid() }) });
+    const parent = defineTable({ name: 'p', columns: t => ({ id: t.uuid().notNull() }), primaryKey: { columns: ['id'] } });
+    const childV1 = defineTable({ name: 'c', columns: t => ({ pId: t.uuid() }) });
     const childV2 = defineTable({
-      tableName: 'c',
+      name: 'c',
       columns: t => ({ pId: t.uuid() }),
       indexes: [{ columns: ['pId'] }],
       foreignKeys: [{ columns: ['pId'], references: ref(parent, ['id']) }],
@@ -192,6 +193,105 @@ ALTER TABLE "t" ALTER COLUMN "a" DROP IDENTITY;
       'createTable',
       'createIndex',
       'addConstraint',
+    ]);
+  });
+});
+
+const ticketColumns = (t: ColumnBuilders) => ({
+  id: t.uuid().notNull(),
+  userId: t.uuid().notNull(),
+  status: t.varchar().notNull(),
+});
+
+describe('generateMigration: concurrently', () => {
+  const bare = defineTable({ name: 'ticket', columns: ticketColumns, primaryKey: { columns: ['id'] } });
+
+  const indexed = defineTable({
+    name: 'ticket',
+    columns: ticketColumns,
+    primaryKey: { columns: ['id'] },
+    indexes: [{ columns: ['userId'], concurrently: true }, { columns: ['status'] }],
+  });
+
+  test('the snapshot records the flag', () => {
+    expect(buildSnapshot([indexed]).tables[0]?.indexes).toEqual([
+      { name: 'ticket_user_id_idx', unique: false, columns: ['user_id'], where: null, concurrently: true },
+      { name: 'ticket_status_idx', unique: false, columns: ['status'], where: null, concurrently: false },
+    ]);
+  });
+
+  test('a concurrent index leaves the migration for `concurrently`, guarded against a leftover invalid index', () => {
+    const result = generateMigration([indexed], buildSnapshot([bare]));
+
+    expect(result.sql).toBe('CREATE INDEX "ticket_status_idx" ON "ticket" ("status");\n');
+    expect(result.statements).toEqual(['CREATE INDEX "ticket_status_idx" ON "ticket" ("status");']);
+    expect(result.concurrently).toEqual([
+      'DROP INDEX CONCURRENTLY IF EXISTS "ticket_user_id_idx";',
+      'CREATE INDEX CONCURRENTLY "ticket_user_id_idx" ON "ticket" ("user_id");',
+    ]);
+    expect(result.changes.map(change => change.kind)).toEqual(['createIndex', 'createIndex']);
+  });
+
+  test('a new table with a concurrent index: the table stays in the migration', () => {
+    const result = generateMigration([indexed]);
+
+    expect(result.statements).toHaveLength(2);
+    expect(result.statements[0]).toStartWith('CREATE TABLE "ticket"');
+    expect(result.statements[1]).toBe('CREATE INDEX "ticket_status_idx" ON "ticket" ("status");');
+    expect(result.concurrently).toHaveLength(2);
+  });
+
+  test('toggling the flag on an existing index is not a change', () => {
+    const plain = defineTable({
+      name: 'ticket',
+      columns: ticketColumns,
+      primaryKey: { columns: ['id'] },
+      indexes: [{ columns: ['userId'] }, { columns: ['status'] }],
+    });
+
+    expect(generateMigration([indexed], buildSnapshot([plain])).changes).toEqual([]);
+    expect(generateMigration([plain], buildSnapshot([indexed])).changes).toEqual([]);
+  });
+
+  test('dropping a concurrent index is concurrent too', () => {
+    const result = generateMigration([bare], buildSnapshot([indexed]));
+
+    expect(result.statements).toEqual(['DROP INDEX "ticket_status_idx";']);
+    expect(result.concurrently).toEqual(['DROP INDEX CONCURRENTLY IF EXISTS "ticket_user_id_idx";']);
+  });
+
+  test('replacing a concurrent index: one drop and one create; UNIQUE and WHERE keep their places', () => {
+    const replaced = defineTable({
+      name: 'ticket',
+      columns: ticketColumns,
+      primaryKey: { columns: ['id'] },
+      indexes: [
+        { columns: ['userId'], unique: true, where: c => sql`${c.status} = 'new'`, concurrently: true },
+        { columns: ['status'] },
+      ],
+    });
+    const result = generateMigration([replaced], buildSnapshot([indexed]));
+
+    expect(result.statements).toEqual([]);
+    expect(result.concurrently).toEqual([
+      'DROP INDEX CONCURRENTLY IF EXISTS "ticket_user_id_idx";',
+      `CREATE UNIQUE INDEX CONCURRENTLY "ticket_user_id_idx" ON "ticket" ("user_id") WHERE "status" = 'new';`,
+    ]);
+  });
+
+  test('a replaced index follows the new flag for both the drop and the create', () => {
+    const plainPartial = defineTable({
+      name: 'ticket',
+      columns: ticketColumns,
+      primaryKey: { columns: ['id'] },
+      indexes: [{ columns: ['userId'], where: c => sql`${c.status} = 'new'` }, { columns: ['status'] }],
+    });
+    const result = generateMigration([plainPartial], buildSnapshot([indexed]));
+
+    expect(result.concurrently).toEqual([]);
+    expect(result.statements).toEqual([
+      'DROP INDEX "ticket_user_id_idx";',
+      `CREATE INDEX "ticket_user_id_idx" ON "ticket" ("user_id") WHERE "status" = 'new';`,
     ]);
   });
 });

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { type AnyTable, AUTO_NAMES, defineTable, ref, renderSql, sql, toSnakeCase } from '../src/index.ts';
 
 const userTable = defineTable({
-  tableName: 'user',
+  name: 'user',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`),
     createdAt: t.timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -60,19 +60,19 @@ describe('defineTable: columns', () => {
   });
 
   test('two properties with the same database name are an error', () => {
-    expect(() => defineTable({ tableName: 't', columns: t => ({ userId: t.uuid(), user_id: t.uuid() }) })).toThrow(
+    expect(() => defineTable({ name: 't', columns: t => ({ userId: t.uuid(), user_id: t.uuid() }) })).toThrow(
       /"user_id" is used twice/,
     );
   });
 
   test('enum().array() is not supported yet', () => {
-    expect(() => defineTable({ tableName: 't', columns: t => ({ tags: t.enum(['a']).array() }) })).toThrow(
+    expect(() => defineTable({ name: 't', columns: t => ({ tags: t.enum(['a']).array() }) })).toThrow(
       /enum\(\)\.array\(\)/,
     );
   });
 
   test('enum() without values is an error', () => {
-    expect(() => defineTable({ tableName: 't', columns: t => ({ s: t.enum([] as unknown as ['x']) }) })).toThrow(
+    expect(() => defineTable({ name: 't', columns: t => ({ s: t.enum([] as unknown as ['x']) }) })).toThrow(
       /non-empty list/,
     );
   });
@@ -91,7 +91,7 @@ describe('defineTable: auto-names', () => {
 
   test('a check name is built from the columns the expression references', () => {
     const table = defineTable({
-      tableName: 'account',
+      name: 'account',
       columns: t => ({ balance: t.numeric(), reserved: t.numeric() }),
       checks: [{ expression: c => sql`${c.reserved} <= ${c.balance}` }],
     });
@@ -101,7 +101,7 @@ describe('defineTable: auto-names', () => {
   test('a check with neither columns nor a name is an error', () => {
     expect(() =>
       defineTable({
-        tableName: 't',
+        name: 't',
         columns: t => ({ a: t.integer() }),
         checks: [{ expression: () => sql`1 = 1` }],
       }),
@@ -110,7 +110,7 @@ describe('defineTable: auto-names', () => {
 
   test('foreign key: name, columns and target resolve to database names', () => {
     const session = defineTable({
-      tableName: 'session',
+      name: 'session',
       columns: t => ({ id: t.uuid().notNull(), userId: t.uuid().notNull() }),
       primaryKey: { columns: ['id'] },
       foreignKeys: [{ columns: ['userId'], references: ref(userTable, ['id']), onDelete: 'cascade' }],
@@ -131,7 +131,7 @@ describe('defineTable: auto-names', () => {
     const target = userTable as AnyTable;
     expect(() =>
       defineTable({
-        tableName: 'session',
+        name: 'session',
         columns: t => ({ userId: t.uuid() }),
         foreignKeys: [{ columns: ['userId'], references: ref(target, ['nope']) }],
       }),
@@ -140,7 +140,7 @@ describe('defineTable: auto-names', () => {
 
   test('a long auto-name is shortened to 63 bytes with a hash', () => {
     const table = defineTable({
-      tableName: 'user_resource_reconciliation_snapshot',
+      name: 'user_resource_reconciliation_snapshot',
       columns: t => ({ reconciliationBatchIdentifier: t.uuid(), resourceKind: t.varchar() }),
       indexes: [{ columns: ['reconciliationBatchIdentifier', 'resourceKind'] }],
     });
@@ -153,7 +153,7 @@ describe('defineTable: auto-names', () => {
   test('an explicit name over 63 bytes is an error', () => {
     expect(() =>
       defineTable({
-        tableName: 't',
+        name: 't',
         columns: t => ({ a: t.integer() }),
         indexes: [{ name: 'i'.repeat(64), columns: ['a'] }],
       }),
@@ -163,7 +163,7 @@ describe('defineTable: auto-names', () => {
   test('two indexes on the same columns share an auto-name, which is an error', () => {
     expect(() =>
       defineTable({
-        tableName: 't',
+        name: 't',
         columns: t => ({ a: t.integer() }),
         indexes: [{ columns: ['a'] }, { unique: true, columns: ['a'] }],
       }),
@@ -173,7 +173,7 @@ describe('defineTable: auto-names', () => {
   test('unique and check share one namespace', () => {
     expect(() =>
       defineTable({
-        tableName: 't',
+        name: 't',
         columns: t => ({ a: t.integer() }),
         uniques: [{ columns: ['a'] }],
         checks: [{ name: 't_a_uq', expression: c => sql`${c.a} > 0` }],
@@ -184,11 +184,26 @@ describe('defineTable: auto-names', () => {
   test('an index named like a unique constraint is an error', () => {
     expect(() =>
       defineTable({
-        tableName: 't',
+        name: 't',
         columns: t => ({ a: t.integer() }),
         uniques: [{ columns: ['a'] }],
         indexes: [{ name: 't_a_uq', columns: ['a'] }],
       }),
     ).toThrow(/same name as the unique/);
+  });
+});
+
+describe('defineTable: concurrently', () => {
+  test('an index can ask to be built concurrently; by default it is not', () => {
+    const table = defineTable({
+      name: 't',
+      columns: t => ({ a: t.integer(), b: t.integer() }),
+      indexes: [{ columns: ['a'], concurrently: true }, { columns: ['b'] }],
+    });
+
+    expect(table.spec.indexes.map(index => [index.name, index.concurrently])).toEqual([
+      ['t_a_idx', true],
+      ['t_b_idx', false],
+    ]);
   });
 });

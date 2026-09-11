@@ -6,17 +6,23 @@
 import type { AnyTable } from '../table/define.ts';
 
 import { type Change, diffSnapshots } from './diff.ts';
-import { renderChanges, renderStatements } from './render.ts';
+import { renderChanges, renderConcurrentStatements, renderStatements } from './render.ts';
 import { buildSnapshot, EMPTY_SNAPSHOT, type Snapshot } from './snapshot.ts';
 
 export interface GenerateResult {
-  /** Migration SQL; an empty string means no changes. */
+  /** The migration text, without the `CONCURRENTLY` statements; an empty string means none. */
   readonly sql: string;
-  /** The same SQL as individual statements; the runner executes these. */
+  /** The same SQL statement by statement. */
   readonly statements: readonly string[];
+  /**
+   * The `CONCURRENTLY` index statements. Postgres refuses them inside a
+   * transaction and inside a multi-statement query alike, so `writeMigration`
+   * puts them into a migration of their own, marked `--> no-transaction`.
+   */
+  readonly concurrently: readonly string[];
   /** The snapshot to store next to the migration. */
   readonly snapshot: Snapshot;
-  /** Parsed changes; handy for tests and for a "what changed" summary. */
+  /** Parsed changes; handy for tests and for a "what changed" summary. Empty means nothing to write. */
   readonly changes: readonly Change[];
 }
 
@@ -27,5 +33,11 @@ export function generateMigration(
   const snapshot = buildSnapshot(tables);
   const changes = diffSnapshots(previous, snapshot);
 
-  return { sql: renderChanges(changes), statements: renderStatements(changes), snapshot, changes };
+  return {
+    sql: renderChanges(changes),
+    statements: renderStatements(changes),
+    concurrently: renderConcurrentStatements(changes),
+    snapshot,
+    changes,
+  };
 }

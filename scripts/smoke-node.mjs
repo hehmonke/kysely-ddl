@@ -46,11 +46,11 @@ const db = new Kysely({ dialect: new PostgresDialect({ pool: new pg.Pool({ conne
 
 try {
   const userTable = defineTable({
-    tableName: 'user',
+    name: 'user',
     columns: t => ({ id: t.uuid().notNull().default(sql`gen_random_uuid()`), nickname: t.varchar().notNull() }),
     primaryKey: { columns: ['id'] },
   });
-  const init = writeMigration(dir, 'init', generateMigration([userTable]));
+  const [init] = writeMigration(dir, 'init', generateMigration([userTable]));
 
   assert.deepEqual(await migrateToLatest({ db, migrationsDir: dir }), { applied: [init] });
   assert.deepEqual(await migrateToLatest({ db, migrationsDir: dir }), { applied: [] });

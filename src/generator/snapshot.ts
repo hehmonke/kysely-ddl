@@ -34,6 +34,12 @@ export interface TableSnapshot {
     readonly unique: boolean;
     readonly columns: readonly string[];
     readonly where: string | null;
+    /**
+     * Built and dropped with `CONCURRENTLY`. How the index is built, not what it
+     * is: the diff ignores it when comparing indexes. Snapshots written before
+     * the field existed simply lack it, which reads as `false`.
+     */
+    readonly concurrently: boolean;
   }[];
   readonly foreignKeys: readonly {
     readonly name: string;
@@ -84,6 +90,7 @@ function tableSnapshot(spec: TableSpec): TableSnapshot {
       unique: i.unique,
       columns: [...i.columns],
       where: i.where !== undefined ? renderSql(i.where) : null,
+      concurrently: i.concurrently,
     })),
     foreignKeys: spec.foreignKeys.map(f => ({
       name: f.name,

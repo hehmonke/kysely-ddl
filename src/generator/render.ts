@@ -88,9 +88,22 @@ function createTable(table: TableSnapshot): string {
 
 function createIndex(table: string, index: TableSnapshot['indexes'][number]): string {
   const unique = index.unique ? 'UNIQUE ' : '';
+  const concurrently = index.concurrently ? 'CONCURRENTLY ' : '';
   const where = index.where === null ? '' : ` WHERE ${index.where}`;
 
-  return `CREATE ${unique}INDEX ${q(index.name)} ON ${q(table)} (${columns(index.columns)})${where};`;
+  return `CREATE ${unique}INDEX ${concurrently}${q(index.name)} ON ${q(table)} (${columns(index.columns)})${where};`;
+}
+
+function dropIndexConcurrently(name: string): string {
+  return `DROP INDEX CONCURRENTLY IF EXISTS ${q(name)};`;
+}
+
+/**
+ * Changes whose SQL postgres refuses inside a transaction, and inside a
+ * multi-statement query too. `writeMigration` gives them a migration of their own.
+ */
+function isConcurrent(change: Change): boolean {
+  return (change.kind === 'createIndex' && change.index.concurrently) || (change.kind === 'dropIndex' && change.concurrently);
 }
 
 function alterColumn(table: string, from: ColumnSnapshot, to: ColumnSnapshot): string[] {
@@ -150,21 +163,39 @@ export function renderChange(change: Change): string[] {
       ];
 
     case 'createIndex':
-      return [createIndex(change.table, change.index)];
+      // a failed CREATE INDEX CONCURRENTLY leaves an invalid index behind, and the
+      // migration stays unrecorded; the drop in front makes the rerun clean
+      return change.index.concurrently
+        ? [dropIndexConcurrently(change.index.name), createIndex(change.table, change.index)]
+        : [createIndex(change.table, change.index)];
 
     case 'dropIndex':
-      return [`DROP INDEX ${q(change.index)};`];
+      return [change.concurrently ? dropIndexConcurrently(change.index) : `DROP INDEX ${q(change.index)};`];
     default:
       return unreachable(change);
   }
 }
 
-/** Individual statements; `writeMigration` writes these to disk. */
+/** The statements of the ordinary migration, that is, everything but the `CONCURRENTLY` ones. */
 export function renderStatements(changes: readonly Change[]): string[] {
-  return changes.flatMap(renderChange);
+  return changes.filter(change => !isConcurrent(change)).flatMap(renderChange);
 }
 
-/** Multi-line statements are separated by a blank line, single-line ones follow each other. */
+/**
+ * The statements of the `--> no-transaction` migration: `CONCURRENTLY` drops and
+ * creates. A replaced index yields its drop twice, as a change of its own and as
+ * the guard in front of the create, so duplicates are folded.
+ */
+export function renderConcurrentStatements(changes: readonly Change[]): string[] {
+  const statements = changes.filter(isConcurrent).flatMap(renderChange);
+
+  return statements.filter((statement, i) => statements.indexOf(statement) === i);
+}
+
+/**
+ * The ordinary migration as one text: multi-line statements are separated by a
+ * blank line, single-line ones follow each other. `writeMigration` writes it as is.
+ */
 export function renderChanges(changes: readonly Change[]): string {
   const statements = renderStatements(changes);
   let out = '';

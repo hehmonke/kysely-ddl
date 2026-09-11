@@ -75,6 +75,8 @@ export interface TableSpec {
     readonly unique: boolean;
     readonly columns: readonly string[];
     readonly where: Sql | undefined;
+    /** Built and dropped with `CONCURRENTLY`, in a migration of its own. */
+    readonly concurrently: boolean;
   }[];
   readonly foreignKeys: readonly {
     readonly name: string;
@@ -142,7 +144,7 @@ export interface TableOptions<
   TCols extends Record<string, AnyColumn>,
 > {
   /** The table name in the database. Inferred as a literal; the Kysely interface keys come from it. */
-  readonly tableName: TName;
+  readonly name: TName;
   /**
    * Columns are declared with a callback that receives the builder set:
    *
@@ -174,6 +176,14 @@ export interface TableOptions<
     readonly unique?: boolean;
     readonly columns: readonly (keyof TCols & string)[];
     readonly where?: (c: Refs<TCols>) => Sql;
+    /**
+     * Build and drop the index with `CONCURRENTLY`, without locking the table
+     * against writes. Postgres refuses that inside a transaction, so the
+     * generator puts such statements into a separate migration marked
+     * `--> no-transaction`, which the runner applies under `transaction: 'each'`.
+     * Toggling the flag on an existing index changes nothing in the database.
+     */
+    readonly concurrently?: boolean;
   }[];
   readonly foreignKeys?: readonly ForeignKeyDef<TCols>[];
   readonly checks?: readonly {
@@ -188,7 +198,7 @@ export interface TableOptions<
 export function defineTable<TName extends string, TCols extends Record<string, AnyColumn>>(
   options: TableOptions<TName, TCols>,
 ): Table<TName, ResolveColumns<TCols>> {
-  const name = options.tableName;
+  const name = options.name;
   assertIdentifier(name, 'table');
 
   const columns: ResolvedColumn[] = [];
@@ -258,6 +268,7 @@ export function defineTable<TName extends string, TCols extends Record<string, A
       unique: index.unique ?? false,
       columns: indexColumns,
       where: index.where !== undefined ? index.where(typedRefs) : undefined,
+      concurrently: index.concurrently ?? false,
     };
   });
 

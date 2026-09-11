@@ -39,7 +39,12 @@ export type Change =
       readonly constraint: Constraint;
     }
   | { readonly kind: 'createIndex'; readonly table: string; readonly index: Index }
-  | { readonly kind: 'dropIndex'; readonly index: string };
+  | {
+      readonly kind: 'dropIndex';
+      readonly index: string;
+      /** `DROP INDEX CONCURRENTLY`, in the `--> no-transaction` migration together with the concurrent creates. */
+      readonly concurrently: boolean;
+    };
 
 function byName<T extends { name: string }>(items: readonly T[]): Map<string, T> {
   return new Map(items.map(item => [item.name, item]));
@@ -76,6 +81,7 @@ function sameConstraint(a: Constraint, b: Constraint): boolean {
   return false;
 }
 
+/** `concurrently` is left out on purpose: it says how to build the index, not what the index is. */
 function sameIndex(a: Index, b: Index): boolean {
   return a.unique === b.unique && sameArray(a.columns, b.columns) && a.where === b.where;
 }
@@ -217,14 +223,16 @@ export function diffSnapshots(prev: Snapshot, next: Snapshot): Change[] {
       if (old === undefined) {
         createIndexes.push({ kind: 'createIndex', table: after.name, index });
       } else if (!sameIndex(old, index)) {
-        dropIndexes.push({ kind: 'dropIndex', index: index.name });
+        // the drop follows the NEW flag: both statements must land in the same
+        // migration, or the create would run before the drop
+        dropIndexes.push({ kind: 'dropIndex', index: index.name, concurrently: index.concurrently });
         createIndexes.push({ kind: 'createIndex', table: after.name, index });
       }
     }
 
     for (const index of before.indexes) {
       if (!afterIndexes.has(index.name)) {
-        dropIndexes.push({ kind: 'dropIndex', index: index.name });
+        dropIndexes.push({ kind: 'dropIndex', index: index.name, concurrently: index.concurrently });
       }
     }
   }

@@ -15,7 +15,7 @@ type Simplify<T> = { [K in keyof T]: T[K] } & {};
 type UUID = string & { readonly __brand: 'uuid' };
 
 const userTable = defineTable({
-  tableName: 'user',
+  name: 'user',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`).$type<UUID>(),
     createdAt: t.timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -82,21 +82,21 @@ export type Tests = [
 // ── what must not compile ────────────────────────────────────────────────────
 
 defineTable({
-  tableName: 'bad_pk',
+  name: 'bad_pk',
   columns: t => ({ id: t.uuid() }),
   // @ts-expect-error no such column
   primaryKey: { columns: ['nope'] },
 });
 
 defineTable({
-  tableName: 'bad_fk',
+  name: 'bad_fk',
   columns: t => ({ userId: t.uuid() }),
   // @ts-expect-error the target table has no such column
   foreignKeys: [{ columns: ['userId'], references: ref(userTable, ['nope']) }],
 });
 
 defineTable({
-  tableName: 'bad_index',
+  name: 'bad_index',
   columns: t => ({ id: t.uuid() }),
   // @ts-expect-error no such column
   indexes: [{ columns: ['id', 'missing'] }],
@@ -109,7 +109,7 @@ interface Profile {
 }
 
 const documentTable = defineTable({
-  tableName: 'document',
+  name: 'document',
   columns: t => ({
     id: t.integer().generatedAlwaysAsIdentity(),
     payload: t.jsonb(),
@@ -201,7 +201,7 @@ export type CasingTests = [
 // ── camelCase type mode: second parameter true ───────────────────────────────
 
 const auditLogTable = defineTable({
-  tableName: 'audit_log',
+  name: 'audit_log',
   columns: t => ({
     id: t.integer().generatedAlwaysAsIdentity(),
     userId: t.uuid().notNull(),
@@ -225,3 +225,8 @@ export type CamelModeTests = [
   // an explicit false is the same as no parameter
   Expect<Equal<inferKyselyDatabase<{ userTable: typeof userTable }, false>, inferKyselyDatabase<{ userTable: typeof userTable }>>>,
 ];
+
+// ── the old option name must not compile ─────────────────────────────────────
+
+// @ts-expect-error tableName was renamed to name
+defineTable({ tableName: 'old', columns: t => ({ id: t.uuid() }) });

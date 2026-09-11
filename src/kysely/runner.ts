@@ -19,7 +19,7 @@
  */
 import { type Kysely, sql } from 'kysely';
 
-import { listMigrations, readStatements } from '../migrator/store.ts';
+import { listMigrations, type MigrationFile, NO_TRANSACTION_MARKER, readMigration } from '../migrator/store.ts';
 
 /** Same as Kysely, so both runners see one state. */
 export const DEFAULT_JOURNAL_TABLE = 'kysely_migration';
@@ -43,10 +43,13 @@ export interface MigratorOptions {
   /** The journal table. `kysely_migration` by default, like Kysely. */
   readonly journalTable?: string;
   /**
-   * `all` (default): the whole run in one transaction, like Kysely, so a failing
-   * migration rolls back the previous ones from the same run. `each`: a
-   * transaction per migration. `none`: no transactions, needed for
-   * `CREATE INDEX CONCURRENTLY`.
+   * `each` (default): a transaction per migration; a migration with
+   * `--> no-transaction` in its header, which is how the generator writes
+   * `CREATE INDEX CONCURRENTLY`, runs without one. `all`: the whole run in one
+   * transaction, like Kysely, so a failing migration rolls back the previous ones
+   * from the same run; the marker is an error here, one shared transaction cannot
+   * leave a migration out. `none`: no `BEGIN` at all; a plain file still runs as
+   * one implicit transaction, since postgres treats a multi-statement query that way.
    */
   readonly transaction?: TransactionMode;
   /**
@@ -73,23 +76,44 @@ export interface SqlMigrator {
   toLatest(): Promise<MigrationRunResult>;
 }
 
-/** A failing statement: which migration, which query and what was applied before it. */
+/** A failing query: which migration, which text and what was applied before it. */
 export class MigrationError extends Error {
   override readonly name = 'MigrationError';
 
+  /**
+   * The line inside `statement` postgres pointed at, when it did. A generated
+   * migration is one query with several statements, so this is what locates
+   * the failing one.
+   */
+  readonly line: number | undefined;
+
   constructor(
     readonly migration: string,
+    /** The text sent as one query: a whole file, or one chunk between `--> statement-breakpoint` markers. */
     readonly statement: string,
     /** Migrations applied by this run before the error. With `transaction: 'all'` they are rolled back. */
     readonly applied: readonly string[],
     cause: unknown,
   ) {
-    super(`${migration}: statement failed\n${statement}\n${describe(cause)}`, { cause });
+    const line = lineOf(statement, cause);
+    super(`${migration}: statement failed${line === undefined ? '' : ` at line ${line}`}\n${statement}\n${describe(cause)}`, { cause });
+    this.line = line;
   }
 }
 
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** Postgres reports the error position as a 1-based character offset into the query; both drivers pass it on. */
+function lineOf(statement: string, cause: unknown): number | undefined {
+  const position = Number((cause as { position?: unknown } | null)?.position);
+
+  if (!Number.isInteger(position) || position < 1) {
+    return undefined;
+  }
+
+  return statement.slice(0, position - 1).split('\n').length;
 }
 
 export function createMigrator(options: MigratorOptions): SqlMigrator {
@@ -106,7 +130,7 @@ export function createMigrator(options: MigratorOptions): SqlMigrator {
   }
 
   const table = sql.table(journal);
-  const mode = options.transaction ?? 'all';
+  const mode = options.transaction ?? 'each';
   const allowUnordered = options.allowUnordered ?? false;
 
   return {
@@ -138,6 +162,11 @@ export function migrateToLatest(options: MigratorOptions): Promise<MigrationRunR
 
 type Connection = Kysely<any>;
 type Journal = ReturnType<typeof sql.table>;
+
+/** A pending migration with its file already parsed. */
+interface PendingMigration extends MigrationFile {
+  readonly name: string;
+}
 
 async function run(connection: Connection, statement: string): Promise<void> {
   await sql.raw(statement).execute(connection);
@@ -225,8 +254,21 @@ async function apply(
     return { applied };
   }
 
-  const runOne = async (name: string): Promise<void> => {
-    for (const statement of readStatements(dir, name)) {
+  // parse everything first: a malformed file, or a marker the mode cannot honor,
+  // must fail before the first statement reaches the database
+  const migrations: PendingMigration[] = pending.map(name => ({ name, ...readMigration(dir, name) }));
+  const marked = migrations.find(migration => !migration.transaction);
+
+  // under 'none' the marker asks for what already happens; under 'all' it cannot be honored
+  if (marked !== undefined && mode === 'all') {
+    throw new Error(
+      `${dir}: ${marked.name} is marked "${NO_TRANSACTION_MARKER}", but transaction: 'all' runs the whole run ` +
+        "in one transaction and cannot leave a migration out. Use transaction: 'each'.",
+    );
+  }
+
+  const runOne = async ({ name, statements }: PendingMigration): Promise<void> => {
+    for (const statement of statements) {
       try {
         await run(connection, statement);
       } catch (error) {
@@ -255,22 +297,27 @@ async function apply(
   switch (mode) {
     case 'all':
       await inTransaction(async () => {
-        for (const name of pending) {
-          await runOne(name);
+        for (const migration of migrations) {
+          await runOne(migration);
         }
       });
       break;
 
     case 'each':
-      for (const name of pending) {
-        await inTransaction(() => runOne(name));
+      for (const migration of migrations) {
+        // a marked migration runs in autocommit, its journal row too, like Kysely's 'per-migration' mode
+        if (migration.transaction) {
+          await inTransaction(() => runOne(migration));
+        } else {
+          await runOne(migration);
+        }
       }
 
       break;
 
     case 'none':
-      for (const name of pending) {
-        await runOne(name);
+      for (const migration of migrations) {
+        await runOne(migration);
       }
 
       break;

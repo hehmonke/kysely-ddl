@@ -18,19 +18,23 @@ export { diffSnapshots } from './generator/diff.ts';
 export type { Change, Constraint } from './generator/diff.ts';
 export { generateMigration } from './generator/generate.ts';
 export type { GenerateResult } from './generator/generate.ts';
-export { renderChange, renderChanges, renderStatements } from './generator/render.ts';
+export { renderChange, renderChanges, renderConcurrentStatements, renderStatements } from './generator/render.ts';
 export { buildSnapshot, EMPTY_SNAPSHOT, SNAPSHOT_VERSION } from './generator/snapshot.ts';
 export type { ColumnSnapshot, Snapshot, TableSnapshot } from './generator/snapshot.ts';
 export {
+  CONCURRENTLY_SUFFIX,
   listMigrations,
   MIGRATION_EXTENSION,
   migrationTimestamp,
+  NO_TRANSACTION_MARKER,
   readLatestSnapshot,
+  readMigration,
   readStatements,
   SNAPSHOT_FILE,
   STATEMENT_SEPARATOR,
   writeMigration,
 } from './migrator/store.ts';
+export type { MigrationFile } from './migrator/store.ts';
 export { toCamelCase, toSnakeCase } from './table/casing.ts';
 export type { CamelCase, SnakeCase } from './table/casing.ts';
 export { ColumnBuilder, columnBuilders } from './table/columns.ts';

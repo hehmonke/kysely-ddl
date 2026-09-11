@@ -39,7 +39,7 @@ Bun, or any PostgreSQL dialect for Kysely. Runtime: Node >= 20 or Bun >= 1.2.
 import { defineTable, ref, sql } from 'kysely-ddl';
 
 export const userTable = defineTable({
-  tableName: 'user',
+  name: 'user',
   // builders arrive as an argument; they are not exported one by one
   columns: t => ({
     // no explicit column name -> derived from the property: created_at, apple_id, ...
@@ -56,7 +56,7 @@ export const userTable = defineTable({
 });
 
 export const sessionTable = defineTable({
-  tableName: 'session',
+  name: 'session',
   columns: t => ({
     id: t.uuid().notNull().default(sql`gen_random_uuid()`),
     userId: t.uuid().notNull(),
@@ -75,10 +75,12 @@ import * as schema from './schema';
 const dir = './migrations';
 const result = generateMigration([schema.userTable, schema.sessionTable], readLatestSnapshot(dir));
 
-if (result.statements.length === 0) {
+if (result.changes.length === 0) {
   console.log('no changes');
 } else {
-  console.log(writeMigration(dir, process.argv[2] ?? 'migration', result)); // 20260910123045_migration
+  // one file, or two when the diff has indexes built CONCURRENTLY:
+  // [ '20260910123045_migration', '20260910123046_migration_concurrently' ]
+  console.log(writeMigration(dir, process.argv[2] ?? 'migration', result));
 }
 ```
 
@@ -120,7 +122,7 @@ A hybrid: columns as chains, everything else as a declarative block.
 |---|---|
 | column types | `t.uuid` `t.varchar({ length })` `t.integer` `t.bigint` `t.boolean` `t.numeric({ precision, scale })` `t.timestamp({ withTimezone, precision })` `t.jsonb` `t.enum([...])` |
 | modifiers | `.notNull()` `.default(v \| sql)` `.defaultNow()` `.array()` `.$type<T>()` `.generatedAlwaysAsIdentity()` |
-| table | `primaryKey` (composite too), `uniques`, `indexes` (unique and partial via `where`), `foreignKeys` (`onDelete` / `onUpdate`), `checks`; names are optional everywhere |
+| table | `primaryKey` (composite too), `uniques`, `indexes` (unique, partial via `where`, built online via `concurrently`), `foreignKeys` (`onDelete` / `onUpdate`), `checks`; names are optional everywhere |
 | expressions | `` sql`...` `` with column and literal interpolation, `inArray(c.status, [...])` |
 
 When a column name is not given, it is derived from the property name with the
@@ -294,15 +296,56 @@ migrations/
   snapshot.json
 ```
 
-`writeMigration(dir, name, result)` writes the `.sql` file and updates
-`snapshot.json`, `readLatestSnapshot(dir)` reads it for the next diff, and
+`writeMigration(dir, name, result)` writes the `.sql` files and updates
+`snapshot.json`, returning the names in application order.
+`readLatestSnapshot(dir)` reads the snapshot for the next diff, and
 `listMigrations(dir)` returns names in the order the runner applies them (by
 character codes, like Kysely). There is no separate journal on disk: the table in
 the database knows what has been applied.
 
-Inside a `.sql` file, statements are separated by the `--> statement-breakpoint`
-comment: the file stays valid for `psql`, and the runner splits on it to execute
-statements one at a time so that an error points at a specific statement.
+An ordinary migration is plain SQL. The runner sends the whole file to postgres
+as one query, and postgres runs a multi-statement query as one implicit
+transaction, so even under `transaction: 'none'` a failing statement rolls the
+file back. `MigrationError.line` says which line postgres pointed at.
+
+### Indexes built `CONCURRENTLY`
+
+`CREATE INDEX CONCURRENTLY` does not lock the table against writes, but postgres
+refuses it inside a transaction and inside a multi-statement query alike. An
+index declared with `concurrently: true` is therefore written as a migration of
+its own, one second after the ordinary one:
+
+```ts
+indexes: [{ columns: ['userId'], concurrently: true }],
+```
+
+```
+migrations/
+  20260910120000_add_tickets.sql               <- the table and its fk, one transaction
+  20260910120001_add_tickets_concurrently.sql  <- the index, outside any transaction
+```
+
+```sql
+--> no-transaction
+DROP INDEX CONCURRENTLY IF EXISTS "ticket_user_id_idx";
+--> statement-breakpoint
+CREATE INDEX CONCURRENTLY "ticket_user_id_idx" ON "ticket" ("user_id");
+```
+
+The `--> no-transaction` marker in the header tells the runner to skip the
+transaction, and `--> statement-breakpoint` makes it send the statements one at a
+time, which `CONCURRENTLY` also demands. Both are comments for `psql`. Dropping
+such an index is `DROP INDEX CONCURRENTLY` in the same kind of file. A failed
+`CREATE INDEX CONCURRENTLY` leaves an invalid index behind while the migration
+stays unrecorded, hence the `DROP INDEX CONCURRENTLY IF EXISTS` in front: the
+rerun is clean. Toggling `concurrently` on an existing index changes nothing.
+
+The runner applies such a migration under the default `transaction: 'each'` and
+under `'none'`, and rejects it under `'all'` before touching the database; through the provider,
+Kysely's `Migrator` needs `transactionMode: 'per-migration'` (Kysely 0.30+).
+Both markers may also be written by hand. A `--> no-transaction` below the
+header is an error: postgres would take it for a comment. `readMigration(dir, name)`
+returns the execution chunks together with the `transaction` flag.
 
 Names are monotonic: if the previous migration was created in the same second,
 the timestamp is bumped forward, otherwise the suffix would decide the order.
@@ -346,7 +389,7 @@ const migrator = createMigrator({
   db,                          // a Kysely instance, not a Transaction
   migrationsDir: './migrations',
   journalTable: 'kysely_migration', // the default, same as Kysely
-  transaction: 'all',          // 'all' | 'each' | 'none'
+  transaction: 'each',         // the default; 'all' | 'each' | 'none'
   allowUnordered: false,
 });
 
@@ -358,13 +401,15 @@ await migrateToLatest({ db, migrationsDir: './migrations' }); // the same in one
 
 | option | effect |
 |---|---|
-| `transaction: 'all'` | the whole run in one transaction, like Kysely: a failing migration rolls back the earlier ones from the same run |
-| `transaction: 'each'` | one transaction per migration: the ones before the failure stay applied |
-| `transaction: 'none'` | no transactions, for `CREATE INDEX CONCURRENTLY` and the like |
+| `transaction: 'each'` | the default: one transaction per migration, the ones before the failure stay applied. A `--> no-transaction` migration runs without one, its journal row in autocommit right after it |
+| `transaction: 'all'` | the whole run in one transaction, like Kysely: a failing migration rolls back the earlier ones from the same run. A `--> no-transaction` migration is an error before anything is applied: one shared transaction cannot leave it out |
+| `transaction: 'none'` | no `BEGIN` at all. A plain file still runs as one implicit transaction; only a file split by `--> statement-breakpoint` fails statement by statement. `--> no-transaction` changes nothing here |
 | `allowUnordered` | apply migrations that sort before already applied ones (branch merges). An error by default |
 
-A failing statement throws `MigrationError` with `migration`, `statement`,
-`applied` (what this run applied before the failure) and the driver's `cause`.
+A failing query throws `MigrationError` with `migration`, `statement` (the text
+sent: a whole file, or one chunk between breakpoints), `line` (where postgres
+pointed inside it), `applied` (what this run applied before the failure) and the
+driver's `cause`.
 A migration present in the journal but missing on disk is an error: restore the
 file from history or delete the row by hand.
 
@@ -384,6 +429,15 @@ import { Migrator } from 'kysely/migration';
 const migrator = new Migrator({ db, provider: sqlFileMigrationProvider('./migrations') });
 const { error, results } = await migrator.migrateToLatest();
 ```
+
+`--> no-transaction` reaches the `Migrator` as `config: { transaction: false }`
+on the migration, the field Kysely 0.30+ honors under
+`new Migrator({ ..., transactionMode: 'per-migration' })`: every migration in
+its own transaction, the marked one without. Under the default `'per-run'`
+Kysely itself reports the marked migration as an error and applies nothing.
+Older Kysely ignores `config`; there the marked migration checks that it is not
+inside a transaction and fails with an error naming the fix, and the only way to
+run it is `disableTransactions: true` for the whole run.
 
 There are no rollbacks: the generator only writes forward. Without `down`,
 Kysely skips a migration on `migrateDown` (`NotExecuted`) and leaves it in the
