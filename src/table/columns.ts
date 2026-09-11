@@ -269,7 +269,7 @@ function timestamp(a?: string | TimestampConfig, b?: TimestampConfig) {
 
 /**
  * `unknown` in TS, narrow it with `$type<T>()`. Values for writes go only
- * through `jsonb()` from `kysely-ddl/kysely`: drivers accept a raw jsonb
+ * through `jsonb()` from `kysely-ddl`: drivers accept a raw jsonb
  * parameter differently, and the helper evens that out.
  */
 function jsonb<N extends string>(name: N): Fresh<N, unknown, undefined, true>;

@@ -7,16 +7,16 @@ import { CamelCasePlugin, type Dialect, type InsertObject, Kysely, PostgresDiale
 import { Migrator } from 'kysely/migration';
 import pg from 'pg';
 
-import { defineTable, NO_TRANSACTION_MARKER, ref } from '../src/index.ts';
 import {
-  createMigrator,
+  defineTable,
   type inferKyselyDatabase,
   type Jsonb,
   jsonb,
   jsonbArray,
-  migrateToLatest,
-  sqlFileMigrationProvider,
-} from '../src/kysely/index.ts';
+  NO_TRANSACTION_MARKER,
+  ref,
+} from '../src/index.ts';
+import { createMigrator, migrateToLatest, sqlFileMigrationProvider } from '../src/migrator/index.ts';
 
 import { BunSqlDialect } from './helpers/bun-dialect.ts';
 import { ADMIN_URL, createTempDatabase, query, tableNames, type TempDatabase } from './helpers/database.ts';

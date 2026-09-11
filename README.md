@@ -28,8 +28,8 @@ Bun, or any PostgreSQL dialect for Kysely. Runtime: Node >= 20 or Bun >= 1.2.
 
 | import | contents |
 |---|---|
-| `kysely-ddl` | table definitions, migration generation, migration files on disk. Does not import Kysely |
-| `kysely-ddl/kysely` | `inferKyselyTable`, `inferKyselyDatabase`, `jsonb` / `jsonbArray`, `createMigrator` / `migrateToLatest`, `sqlFileMigrationProvider` |
+| `kysely-ddl` | table definitions, migration generation, migration files on disk, `inferKyselyTable` / `inferKyselyDatabase`, `jsonb` / `jsonbArray` |
+| `kysely-ddl/migrator` | running migrations: `createMigrator` / `migrateToLatest` and `sqlFileMigrationProvider`. A separate entry point, so that a project which applies its migrations some other way does not pull the runner in |
 
 ## Quick start
 
@@ -87,7 +87,7 @@ if (result.changes.length === 0) {
 `migrate.ts`, applying migrations:
 
 ```ts
-import { migrateToLatest } from 'kysely-ddl/kysely';
+import { migrateToLatest } from 'kysely-ddl/migrator';
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 
@@ -104,7 +104,7 @@ try {
 Types for queries:
 
 ```ts
-import type { inferKyselyDatabase } from 'kysely-ddl/kysely';
+import type { inferKyselyDatabase } from 'kysely-ddl';
 import * as schema from './schema';
 
 type DB = inferKyselyDatabase<typeof schema>;
@@ -195,7 +195,7 @@ in the diff -> a branch in the renderer.
 ## Types for Kysely
 
 ```ts
-import type { inferKyselyDatabase, inferKyselyTable } from 'kysely-ddl/kysely';
+import type { inferKyselyDatabase, inferKyselyTable } from 'kysely-ddl';
 import type { Insertable, Selectable } from 'kysely';
 
 type UserTable = inferKyselyTable<typeof userTable>;
@@ -257,7 +257,7 @@ and the `Jsonb<T>` brand in the write types keeps raw objects and strings from
 slipping past them:
 
 ```ts
-import { jsonb, jsonbArray } from 'kysely-ddl/kysely';
+import { jsonb, jsonbArray } from 'kysely-ddl';
 
 await db.insertInto('user').values({ settings: jsonb({ theme: 'dark', tags: ['a'] }) }).execute();
 await db.updateTable('user').set({ settings: jsonb({ theme: 'light' }) }).where('id', '=', id).execute();
@@ -383,7 +383,7 @@ The runner takes a ready `Kysely` with any PostgreSQL dialect and works through 
 single connection (`db.connection()`): the lock and the transaction live on it.
 
 ```ts
-import { createMigrator, migrateToLatest } from 'kysely-ddl/kysely';
+import { createMigrator, migrateToLatest } from 'kysely-ddl/migrator';
 
 const migrator = createMigrator({
   db,                          // a Kysely instance, not a Transaction
@@ -423,7 +423,7 @@ lock is the same `pg_advisory_lock`. So `.sql` migrations can also be run by the
 built-in `Migrator`, and the two runners can alternate on one database:
 
 ```ts
-import { sqlFileMigrationProvider } from 'kysely-ddl/kysely';
+import { sqlFileMigrationProvider } from 'kysely-ddl/migrator';
 import { Migrator } from 'kysely/migration';
 
 const migrator = new Migrator({ db, provider: sqlFileMigrationProvider('./migrations') });

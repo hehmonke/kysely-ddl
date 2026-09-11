@@ -27,6 +27,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ### Changed
 
+- **Breaking:** entry points. `kysely-ddl/kysely` is gone: `inferKyselyTable`,
+  `inferKyselyDatabase`, `jsonb`, `jsonbArray` and the `Jsonb` type now come
+  from `kysely-ddl`, which therefore imports `kysely`, the peer dependency, at
+  runtime. The runner (`createMigrator`, `migrateToLatest`, `MigrationError`,
+  `DEFAULT_JOURNAL_TABLE`, `MIGRATION_LOCK_ID` and their types) and
+  `sqlFileMigrationProvider` moved to the new `kysely-ddl/migrator`, so that a
+  project which applies its migrations some other way does not pull them in.
 - **Breaking:** the `defineTable` option `tableName` is now `name`.
 - **Breaking:** the runner's default `transaction` mode is `'each'` instead of
   `'all'`, so that a generated `_concurrently` migration runs out of the box.

@@ -1,5 +1,15 @@
-import { type CamelCase, defineTable, ref, type SnakeCase, sql } from '../src/index.ts';
-import { type inferKyselyDatabase, type inferKyselyTable, type Jsonb, jsonb, jsonbArray } from '../src/kysely/index.ts';
+import {
+  type CamelCase,
+  defineTable,
+  type inferKyselyDatabase,
+  type inferKyselyTable,
+  type Jsonb,
+  jsonb,
+  jsonbArray,
+  ref,
+  type SnakeCase,
+  sql,
+} from '../src/index.ts';
 
 /**
  * Type-level checks. The file is never executed, only `tsc` reads it

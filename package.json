@@ -41,9 +41,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./kysely": {
-      "types": "./dist/kysely/index.d.ts",
-      "default": "./dist/kysely/index.js"
+    "./migrator": {
+      "types": "./dist/migrator/index.d.ts",
+      "default": "./dist/migrator/index.js"
     },
     "./package.json": "./package.json"
   },

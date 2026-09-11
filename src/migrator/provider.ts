@@ -31,7 +31,7 @@
  */
 import { type Kysely, sql } from 'kysely';
 
-import { listMigrations, NO_TRANSACTION_MARKER, readMigration } from '../migrator/store.ts';
+import { listMigrations, NO_TRANSACTION_MARKER, readMigration } from './store.ts';
 
 import type { Migration, MigrationProvider } from 'kysely/migration';
 

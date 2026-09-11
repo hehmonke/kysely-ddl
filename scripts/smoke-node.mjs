@@ -12,7 +12,7 @@ import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 
 import { defineTable, generateMigration, sql, writeMigration } from '../dist/index.js';
-import { createMigrator, migrateToLatest } from '../dist/kysely/index.js';
+import { createMigrator, migrateToLatest } from '../dist/migrator/index.js';
 
 if (typeof globalThis.Bun !== 'undefined') {
   console.error('smoke-node: run this under Node, not Bun');

@@ -1,18 +1,24 @@
 /**
- * kysely-ddl: PostgreSQL schema as code and SQL migration generation.
- * Has no runtime dependency on Kysely or on any driver.
+ * kysely-ddl: PostgreSQL schema as code, SQL migration generation and the
+ * Kysely side of it, row types and jsonb values. Imports `kysely`, the peer
+ * dependency, and no driver.
  *
  * Layers and dependency direction:
  *
- *   table ◄── generator ◄── migrator ◄── kysely
+ *   table ◄── generator ◄── migrator/store ◄── migrator (runner, provider)
+ *   table ◄── kysely (row types, jsonb values)
  *
  * Entry points:
  *
- *   kysely-ddl         — this file: tables, generation, migration files
- *   kysely-ddl/kysely  — row types, migration runner, provider for Migrator
+ *   kysely-ddl           — this file: tables, generation, migration files on disk,
+ *                          `inferKyselyTable` / `inferKyselyDatabase`, `jsonb` / `jsonbArray`
+ *   kysely-ddl/migrator  — running migrations: `createMigrator` / `migrateToLatest`
+ *                          and `sqlFileMigrationProvider`; separate, so that a project
+ *                          which applies migrations some other way does not pull it in
  *
  * Exports are sorted by module path: generator (snapshot, diff, render,
- * facade), migrator (files on disk), table (table definitions).
+ * facade), kysely (row types, jsonb values), migrator (files on disk), table
+ * (table definitions).
  */
 export { diffSnapshots } from './generator/diff.ts';
 export type { Change, Constraint } from './generator/diff.ts';
@@ -21,6 +27,9 @@ export type { GenerateResult } from './generator/generate.ts';
 export { renderChange, renderChanges, renderConcurrentStatements, renderStatements } from './generator/render.ts';
 export { buildSnapshot, EMPTY_SNAPSHOT, SNAPSHOT_VERSION } from './generator/snapshot.ts';
 export type { ColumnSnapshot, Snapshot, TableSnapshot } from './generator/snapshot.ts';
+export type { inferKyselyDatabase, inferKyselyTable } from './kysely/infer.ts';
+export { jsonb, jsonbArray } from './kysely/json.ts';
+export type { Jsonb } from './kysely/json.ts';
 export {
   CONCURRENTLY_SUFFIX,
   listMigrations,

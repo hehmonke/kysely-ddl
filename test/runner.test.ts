@@ -7,7 +7,7 @@ import { type Dialect, Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 
 import { NO_TRANSACTION_MARKER, STATEMENT_SEPARATOR } from '../src/index.ts';
-import { createMigrator, DEFAULT_JOURNAL_TABLE, migrateToLatest, MigrationError } from '../src/kysely/index.ts';
+import { createMigrator, DEFAULT_JOURNAL_TABLE, migrateToLatest, MigrationError } from '../src/migrator/index.ts';
 
 import { BunSqlDialect } from './helpers/bun-dialect.ts';
 import { ADMIN_URL, columnNames, createTempDatabase, query, tableNames, type TempDatabase } from './helpers/database.ts';

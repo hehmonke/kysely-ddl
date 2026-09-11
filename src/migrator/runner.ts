@@ -19,7 +19,7 @@
  */
 import { type Kysely, sql } from 'kysely';
 
-import { listMigrations, type MigrationFile, NO_TRANSACTION_MARKER, readMigration } from '../migrator/store.ts';
+import { listMigrations, type MigrationFile, NO_TRANSACTION_MARKER, readMigration } from './store.ts';
 
 /** Same as Kysely, so both runners see one state. */
 export const DEFAULT_JOURNAL_TABLE = 'kysely_migration';
