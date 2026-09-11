@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/hehmonke/kysely-ddl/actions/workflows/ci.yml/badge.svg)](https://github.com/hehmonke/kysely-ddl/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/kysely-ddl)](https://www.npmjs.com/package/kysely-ddl)
+[![license](https://img.shields.io/npm/l/kysely-ddl)](LICENSE)
 
 PostgreSQL schema as TypeScript code, SQL migrations generated from snapshot
 diffs, Kysely table types, and a migration runner on top of your `Kysely`.
@@ -185,12 +186,11 @@ Collisions are caught too: two objects on the same columns, an index named like
 a unique constraint, a check with neither columns nor a name, two properties
 mapping to the same database name.
 
-### What is missing
+### Limitations
 
 Native enums, stored generated columns, schemas other than `public`, views,
-`DEFERRABLE`, covering indexes, index methods other than btree. Everything is
-added the same way: a field in `TableSpec` -> a field in the snapshot -> a branch
-in the diff -> a branch in the renderer.
+`DEFERRABLE`, covering indexes, index methods other than btree. Pull requests are
+welcome; [CONTRIBUTING.md](CONTRIBUTING.md) describes how such a feature is added.
 
 ## Types for Kysely
 
@@ -469,24 +469,13 @@ What the checks showed on `pg` 8.23 and `Bun.SQL` 1.4 (parameters via Kysely):
 Reading jsonb, JSON arrays, `jsonb[]` and `varchar[]` yields parsed JS values
 with both drivers.
 
-## Development
+## Contributing
 
-```bash
-bun install
-bun run db:up                                   # postgres:18-alpine on 54329
-DATABASE_URL=postgres://postgres:postgres@localhost:54329/kysely_ddl bun test
-bun run typecheck && bun run lint && bun run build
-DATABASE_URL=... bun run smoke:node             # the built dist under Node with pg
-```
-
-Without `DATABASE_URL` the integration tests are skipped, the unit tests always
-run. Type-level checks live in `test/types.test-d.ts` and are read by `tsc` only.
-
-Releases are tagged `vX.Y.Z`, matching `version` in `package.json`: GitHub
-Actions runs the checks and does `npm publish` with provenance. Authentication is
-npm trusted publishing (OIDC) configured on npmjs.com for this repository and
-the `publish.yml` workflow, so no token secret is needed.
+Bug reports and pull requests are welcome on
+[GitHub](https://github.com/hehmonke/kysely-ddl/issues). [CONTRIBUTING.md](CONTRIBUTING.md)
+covers setting up the repository, running the tests and cutting a release.
+Changes between versions are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-MIT.
+[MIT](LICENSE)
