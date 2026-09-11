@@ -4,6 +4,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-12
+
 ### Added
 
 - `concurrently: true` on an index in `defineTable`: the index is built and
