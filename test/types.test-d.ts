@@ -341,3 +341,45 @@ export type PerTypeTests = [
   Expect<Equal<(typeof perTypeOk)['_']['columns']['d']['kind'], 'bigint'>>,
   Expect<Equal<(typeof userTable)['_']['columns']['status']['kind'], 'varchar'>>,
 ];
+
+// ── enum(): the values may come from anywhere typed as string literals ───────
+
+declare const statusOptions: ('new' | 'in-progress' | 'closed')[]; // the shape of Zod 4's `.options`
+const STATES = ['on', 'off'] as const;
+enum Level {
+  Low = 'low',
+  High = 'high',
+}
+declare const plainStrings: string[];
+
+const enumSourcesTable = defineTable({
+  name: 'enum_sources',
+  columns: t => ({
+    status: t.enum(statusOptions).notNull(),
+    state: t.enum(STATES).notNull(),
+    level: t.enum(Object.values(Level)).notNull(),
+    named: t.enum('named_col', statusOptions).notNull(),
+  }),
+});
+
+type EnumSources = inferKyselyTable<typeof enumSourcesTable>;
+
+export type EnumSourceTests = [
+  Expect<Equal<Selectable<EnumSources>['status'], 'new' | 'in-progress' | 'closed'>>,
+  Expect<Equal<Selectable<EnumSources>['state'], 'on' | 'off'>>,
+  Expect<Equal<Selectable<EnumSources>['level'], Level.Low | Level.High>>,
+  Expect<Equal<Selectable<EnumSources>['named_col'], 'new' | 'in-progress' | 'closed'>>,
+  Expect<Equal<(typeof enumSourcesTable)['_']['columns']['status']['enumValues'], ('new' | 'in-progress' | 'closed')[]>>,
+];
+
+defineTable({
+  name: 'enum_bad',
+  columns: t => ({
+    // @ts-expect-error string[] carries no literals: the column would be typed string
+    a: t.enum(plainStrings),
+    // @ts-expect-error an empty list
+    b: t.enum([]),
+    // @ts-expect-error string[] carries no literals, with a name as well
+    c: t.enum('c', plainStrings),
+  }),
+});

@@ -4,6 +4,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Changed
+
+- `enum()` takes any array typed as string literals, not only a list written in
+  place: Zod's `.options`, `Object.values()` of a string enum and a `const` array
+  all work, and the column type stays the union of the values. A `string[]` is
+  still refused, now with a message saying why instead of a tuple mismatch, and
+  so is an empty list.
+
 ## [0.4.0] — 2026-09-12
 
 ### Changed

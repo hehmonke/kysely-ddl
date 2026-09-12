@@ -78,6 +78,12 @@ describe('defineTable: columns', () => {
       /non-empty list/,
     );
   });
+
+  test('enum() takes a plain array of values, not only a literal list', () => {
+    const values: ('new' | 'closed')[] = ['new', 'closed'];
+    const table = defineTable({ name: 'ticket', columns: t => ({ status: t.enum(values) }) });
+    expect(renderSql(table.spec.checks[0]!.expression)).toBe(`"status" in ('new', 'closed')`);
+  });
 });
 
 describe('defineTable: auto-names', () => {

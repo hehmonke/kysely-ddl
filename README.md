@@ -163,6 +163,20 @@ The column stays `varchar`, the allowed values go into a check constraint named
 CONSTRAINT "user_status_check" CHECK ("status" in ('active', 'banned'))
 ```
 
+The list is any array typed as string literals, not only one written in place,
+so it can be shared with the validation layer:
+
+```ts
+const TicketStatus = z.enum(['new', 'in-progress', 'closed']);
+
+status: t.enum(TicketStatus.options).notNull(), // 'new' | 'in-progress' | 'closed'
+level: t.enum(Object.values(Level)), // a string enum
+```
+
+A plain `string[]` is a compile error: without literals the column would be typed
+`string`, which is what `enum()` exists to avoid. Type the list, or use `varchar()`
+with a check.
+
 There is deliberately no native `create type ... as enum`: a new value cannot be
 used in the same transaction that adds it, which breaks exactly when migrations
 run in a single transaction. Changing the value list of `varchar` + check is a
