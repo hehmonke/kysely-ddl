@@ -1,3 +1,9 @@
+/**
+ * Type-level checks. The file is never executed, only `tsc` reads it
+ * (`bun run typecheck`); a failing `Expect` is a compile error.
+ */
+import { type Insertable, type InsertObject, type Selectable, sql, type UpdateObject } from 'kysely';
+
 import {
   type CamelCase,
   defineTable,
@@ -8,14 +14,7 @@ import {
   jsonbArray,
   ref,
   type SnakeCase,
-  sql,
 } from '../src/index.ts';
-
-/**
- * Type-level checks. The file is never executed, only `tsc` reads it
- * (`bun run typecheck`); a failing `Expect` is a compile error.
- */
-import type { Insertable, InsertObject, Selectable, UpdateObject } from 'kysely';
 
 // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- the standard trick for comparing types
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -306,3 +305,39 @@ export type Typo = inferKyselyDatabase<{ userTable: typeof userTable }, { camelc
 
 // @ts-expect-error tableName was renamed to name
 defineTable({ tableName: 'old', columns: t => ({ id: t.uuid() }) });
+
+// ── one builder per column type: a modifier is offered where it applies ──────
+
+defineTable({
+  name: 'per_type',
+  columns: t => ({
+    // @ts-expect-error defaultNow() exists on timestamp columns only
+    a: t.uuid().defaultNow(),
+    // @ts-expect-error an array column is a plain column: no defaultNow()
+    b: t.timestamp().array().defaultNow(),
+    // @ts-expect-error generatedAlwaysAsIdentity() exists on integer and bigint columns only
+    c: t.uuid().generatedAlwaysAsIdentity(),
+    // @ts-expect-error an array column is a plain column: no identity
+    d: t.integer().array().generatedAlwaysAsIdentity(),
+  }),
+});
+
+// the chain keeps its builder: the modifiers of the type stay available after the shared ones
+const perTypeOk = defineTable({
+  name: 'per_type_ok',
+  columns: t => ({
+    a: t.timestamp().notNull().defaultNow(),
+    b: t.timestamp({ withTimezone: true }).defaultNow().notNull(),
+    c: t.timestamp().$type<string>().defaultNow(),
+    d: t.bigint().generatedAlwaysAsIdentity(),
+    e: t.integer('n').notNull().generatedAlwaysAsIdentity(),
+    f: t.varchar().array().notNull().default(sql`'{}'`),
+  }),
+  primaryKey: { columns: ['d'] },
+});
+
+export type PerTypeTests = [
+  Expect<Equal<(typeof perTypeOk)['_']['columns']['a']['kind'], 'timestamp'>>,
+  Expect<Equal<(typeof perTypeOk)['_']['columns']['d']['kind'], 'bigint'>>,
+  Expect<Equal<(typeof userTable)['_']['columns']['status']['kind'], 'varchar'>>,
+];

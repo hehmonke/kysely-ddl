@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { sql } from 'kysely';
+
 import {
   buildSnapshot,
   type ColumnBuilders,
@@ -9,7 +11,6 @@ import {
   generateMigration,
   ref,
   renderChanges,
-  sql,
 } from '../src/index.ts';
 
 const userTable = defineTable({

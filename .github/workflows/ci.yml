@@ -10,8 +10,13 @@ env:
 
 jobs:
   check:
-    name: Typecheck, lint, tests, build (Bun)
+    name: Typecheck, lint, tests, build (Bun, kysely ${{ matrix.kysely }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # the lockfile version, and 0.29.0: the oldest one `peerDependencies` allows
+        kysely: [lockfile, '0.29.0']
     services:
       postgres:
         image: postgres:18-alpine
@@ -32,6 +37,8 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
+      - if: matrix.kysely != 'lockfile'
+        run: bun add -d kysely@${{ matrix.kysely }}
       - run: bun run typecheck
       - run: bun run lint
       - run: bun test

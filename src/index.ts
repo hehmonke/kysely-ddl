@@ -46,8 +46,12 @@ export {
 export type { MigrationFile } from './migrator/store.ts';
 export { toCamelCase, toSnakeCase } from './table/casing.ts';
 export type { CamelCase, SnakeCase } from './table/casing.ts';
-export { ColumnBuilder, columnBuilders } from './table/columns.ts';
-export type { AnyColumn, ColumnBuilders, ColumnCfg, ColumnSpec, DefaultValue } from './table/columns.ts';
+export { columnBuilders } from './table/column-types/index.ts';
+export type { ColumnBuilders } from './table/column-types/index.ts';
+export { IntegerColumnBuilder } from './table/column-types/integer.ts';
+export { TimestampColumnBuilder } from './table/column-types/timestamp.ts';
+export { ColumnBuilder } from './table/columns.ts';
+export type { AnyColumn, ColumnCfg, ColumnKind, ColumnSpec, DefaultValue } from './table/columns.ts';
 export { AUTO_NAMES, defineTable, ref } from './table/define.ts';
 export type {
   AnyTable,
@@ -62,5 +66,5 @@ export type {
   TableSpec,
 } from './table/define.ts';
 export { assertIdentifier, autoName, fitIdentifier, MAX_IDENTIFIER_BYTES } from './table/identifier.ts';
-export { collectColumns, inArray, quoteIdentifier, quoteLiteral, renderSql, sql } from './table/sql.ts';
-export type { ColumnRef, Literal, Sql, SqlChunk } from './table/sql.ts';
+export { collectColumns, inArray, quoteIdentifier, quoteLiteral, renderSql } from './table/sql.ts';
+export type { Sql } from './table/sql.ts';

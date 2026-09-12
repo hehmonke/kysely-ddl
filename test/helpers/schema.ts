@@ -1,11 +1,12 @@
 /** A shared mini schema for the integration tests. Defaults use only what postgres 13+ has. */
+import { sql } from 'kysely';
+
 import {
   type AnyTable,
   defineTable,
   generateMigration,
   readLatestSnapshot,
   ref,
-  sql,
   writeMigration,
 } from '../../src/index.ts';
 

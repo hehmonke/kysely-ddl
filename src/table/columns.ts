@@ -3,8 +3,9 @@
  *
  * The set of types is what application schemas actually need:
  * uuid / varchar / integer / bigint / boolean / numeric / timestamp / jsonb,
- * plus `enum`, a varchar with an automatic check constraint.
- * Adding a type is one line at the bottom of the file.
+ * plus `enum`, a varchar with an automatic check constraint. Each type is a file
+ * in `column-types/`; adding a type is a new file there plus a line in
+ * `columnBuilders`.
  *
  * ── Why there is no `mode` ───────────────────────────────────────────────────
  *
@@ -20,11 +21,27 @@
  * `Bun.SQL` can both be told to return int8 as `bigint`, and `{ bigint: true }` in
  * the infer options (see the kysely layer) types `bigint()` columns to match.
  * For another type use `$type<T>()` plus an explicit conversion on your side.
+ *
+ * ── One builder per column type ──────────────────────────────────────────────
+ *
+ * The shared modifiers, `notNull()`, `default()`, `array()`, `$type()`, live on
+ * `ColumnBuilder` here. A modifier that applies to some types only lives on a
+ * subclass in the type's file: `defaultNow()` on the timestamp builder,
+ * `generatedAlwaysAsIdentity()` on the integer one, so each is offered exactly
+ * where it makes sense. A chain keeps its builder: `BuilderFor` picks the class
+ * from the column kind at the type level, `next()` at runtime. An array column is
+ * a plain column, since neither of those modifiers applies to an array.
  */
+import type { IntegerColumnBuilder } from './column-types/integer.ts';
+import type { TimestampColumnBuilder } from './column-types/timestamp.ts';
 import type { Sql } from './sql.ts';
+
+/** The base postgres type of a column; `enum()` is a varchar. */
+export type ColumnKind = 'uuid' | 'varchar' | 'integer' | 'bigint' | 'boolean' | 'numeric' | 'timestamp' | 'jsonb';
 
 /** Column config at the type level. */
 export interface ColumnCfg {
+  readonly kind: ColumnKind;
   /** The explicitly set column name; `undefined` means it is taken from the property name. */
   readonly name: string | undefined;
   readonly data: unknown;
@@ -49,7 +66,8 @@ export interface ColumnCfg {
  * `Omit<T, keyof U> & U` does not work here: TypeScript cannot prove that the
  * result is still a `ColumnCfg` when U is declared as `Partial`.
  */
-type Update<T extends ColumnCfg, U extends Partial<ColumnCfg>> = {
+export type Update<T extends ColumnCfg, U extends Partial<ColumnCfg>> = {
+  readonly kind: U extends { kind: infer V extends ColumnKind } ? V : T['kind'];
   readonly name: U extends { name: infer V } ? V : T['name'];
   readonly data: U extends { data: infer V } ? V : T['data'];
   readonly notNull: U extends { notNull: infer V extends boolean } ? V : T['notNull'];
@@ -66,6 +84,7 @@ export type DefaultValue = Sql | string | number | boolean | null;
 
 /** Everything needed to generate DDL. */
 export interface ColumnSpec {
+  readonly kind: ColumnKind;
   /** The base postgres type without `[]`: 'uuid', 'varchar(2)', 'numeric(10, 2)'. */
   readonly sqlType: string;
   readonly name: string | undefined;
@@ -76,44 +95,35 @@ export interface ColumnSpec {
   readonly enumValues: readonly string[] | undefined;
 }
 
+/**
+ * The builder for a config: the subclass of the column's kind, or the plain
+ * builder for an array column. A new subclass in `column-types/` gets a line here.
+ */
+export type BuilderFor<T extends ColumnCfg> = T['array'] extends true
+  ? ColumnBuilder<T>
+  : T['kind'] extends 'timestamp'
+    ? TimestampColumnBuilder<T>
+    : T['kind'] extends 'integer' | 'bigint'
+      ? IntegerColumnBuilder<T>
+      : ColumnBuilder<T>;
+
+/** The modifiers every column has. The type-specific ones are on the subclasses in `column-types/`. */
 export class ColumnBuilder<T extends ColumnCfg = ColumnCfg> {
   declare readonly _: T;
 
   constructor(readonly spec: ColumnSpec) {}
 
-  private next<U extends Partial<ColumnCfg>>(
-    patch: Partial<ColumnSpec>,
-  ): ColumnBuilder<Update<T, U>> {
-    return new ColumnBuilder({ ...this.spec, ...patch });
+  notNull(): BuilderFor<Update<T, { notNull: true }>> {
+    return next<T, { notNull: true }>(this, { notNull: true });
   }
 
-  notNull(): ColumnBuilder<Update<T, { notNull: true }>> {
-    return this.next<{ notNull: true }>({ notNull: true });
+  default(value: DefaultValue): BuilderFor<Update<T, { hasDefault: true }>> {
+    return next<T, { hasDefault: true }>(this, { default: value });
   }
 
-  default(value: DefaultValue): ColumnBuilder<Update<T, { hasDefault: true }>> {
-    return this.next<{ hasDefault: true }>({ default: value });
-  }
-
-  /** Sugar for `.default(sql\`now()\`)`. */
-  defaultNow(): ColumnBuilder<Update<T, { hasDefault: true }>> {
-    return this.next<{ hasDefault: true }>({
-      default: { kind: 'sql', chunks: ['now()'] },
-    });
-  }
-
-  /** `GENERATED ALWAYS AS IDENTITY`: postgres owns the value, it cannot be inserted. */
-  generatedAlwaysAsIdentity(): ColumnBuilder<
-    Update<T, { notNull: true; hasDefault: true; identity: 'always' }>
-  > {
-    return this.next<{ notNull: true; hasDefault: true; identity: 'always' }>({
-      notNull: true,
-      identity: 'always',
-    });
-  }
-
+  /** An array column is a plain column: `defaultNow()` and identity do not apply to arrays. */
   array(): ColumnBuilder<Update<T, { data: T['data'][]; array: true }>> {
-    return this.next<{ data: T['data'][]; array: true }>({ array: true });
+    return new ColumnBuilder<Update<T, { data: T['data'][]; array: true }>>({ ...this.spec, array: true });
   }
 
   /**
@@ -122,21 +132,31 @@ export class ColumnBuilder<T extends ColumnCfg = ColumnCfg> {
    * option off.
    */
   // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- the type parameter is the whole point of the method
-  $type<U>(): ColumnBuilder<Update<T, { data: U; bigint: false }>> {
-    return this as unknown as ColumnBuilder<Update<T, { data: U; bigint: false }>>;
+  $type<U>(): BuilderFor<Update<T, { data: U; bigint: false }>> {
+    return this as unknown as BuilderFor<Update<T, { data: U; bigint: false }>>;
   }
 }
 
-export type AnyColumn = ColumnBuilder<ColumnCfg>;
+/**
+ * What `defineTable` needs from a column: the config type and the spec. Not the
+ * builder class itself, so that TypeScript never compares two builders of
+ * different configs member by member.
+ */
+export interface AnyColumn {
+  readonly _: ColumnCfg;
+  readonly spec: ColumnSpec;
+}
 
-/** A fresh column: the name is either explicit or taken from the object key. */
-type Fresh<
+/** A fresh column of a kind: the name is either explicit or taken from the object key. */
+export type Fresh<
+  K extends ColumnKind,
   N extends string | undefined,
   TData,
   TEnum extends readonly string[] | undefined = undefined,
   TJson extends boolean = false,
   TBigint extends boolean = false,
-> = ColumnBuilder<{
+> = BuilderFor<{
+  kind: K;
   name: N;
   data: TData;
   notNull: false;
@@ -148,176 +168,30 @@ type Fresh<
   bigint: TBigint;
 }>;
 
-function fresh(
+/** The spec of a fresh column, for the factories in `column-types/`. */
+export function freshSpec(
+  kind: ColumnKind,
   sqlType: string,
   name: string | undefined,
   enumValues?: readonly string[],
-): ColumnBuilder<ColumnCfg> {
-  return new ColumnBuilder({
-    sqlType,
-    name,
-    notNull: false,
-    default: undefined,
-    identity: undefined,
-    array: false,
-    enumValues,
-  });
+): ColumnSpec {
+  return { kind, sqlType, name, notNull: false, default: undefined, identity: undefined, array: false, enumValues };
+}
+
+/**
+ * A copy of the builder with the patch applied, of the same class, so that a
+ * chain keeps the modifiers of its type; the config type is updated the same way.
+ */
+export function next<T extends ColumnCfg, U extends Partial<ColumnCfg>>(
+  builder: ColumnBuilder<T>,
+  patch: Partial<ColumnSpec>,
+): BuilderFor<Update<T, U>> {
+  const Self = builder.constructor as new (spec: ColumnSpec) => BuilderFor<Update<T, U>>;
+
+  return new Self({ ...builder.spec, ...patch });
 }
 
 /** Parses `(name?, config?)`, both forms of calling a builder. */
-function args<C>(a?: string | C, b?: C): { name: string | undefined; config: C | undefined } {
+export function args<C>(a?: string | C, b?: C): { name: string | undefined; config: C | undefined } {
   return typeof a === 'string' ? { name: a, config: b } : { name: undefined, config: a };
 }
-
-// ── column types ─────────────────────────────────────────────────────────────
-
-function uuid<N extends string>(name: N): Fresh<N, string>;
-function uuid(): Fresh<undefined, string>;
-function uuid(name?: string) {
-  return fresh('uuid', name);
-}
-
-interface VarcharConfig {
-  length?: number;
-}
-
-function varchar<N extends string>(name: N, config?: VarcharConfig): Fresh<N, string>;
-function varchar(config?: VarcharConfig): Fresh<undefined, string>;
-function varchar(a?: string | VarcharConfig, b?: VarcharConfig) {
-  const { name, config } = args<VarcharConfig>(a, b);
-  const sqlType = config?.length === undefined ? 'varchar' : `varchar(${config.length})`;
-
-  return fresh(sqlType, name);
-}
-
-/**
- * A set of allowed values: the column stays `varchar`, and the restriction goes
- * into a check constraint that `defineTable` builds itself:
- *
- * ```sql
- * CONSTRAINT "ticket_status_check" CHECK ("status" in ('new', 'closed'))
- * ```
- *
- * A native `create type ... as enum` is deliberately not used: adding a value
- * requires `ALTER TYPE`, and the new value cannot be used in the same transaction
- * that added it. `varchar` + check changes with a regular `ALTER TABLE`.
- *
- * In the types this is a union of string literals, not `string`.
- *
- * The function is declared as `enumColumn` because `enum` is a reserved word and
- * cannot name a declaration. It can be an object key though, and the builders are
- * handed out only as an object, so from the outside it is exactly `t.enum(...)`.
- */
-function enumColumn<N extends string, const T extends readonly [string, ...string[]]>(
-  name: N,
-  values: T,
-): Fresh<N, T[number], T>;
-function enumColumn<const T extends readonly [string, ...string[]]>(
-  values: T,
-): Fresh<undefined, T[number], T>;
-function enumColumn(
-  a: string | readonly [string, ...string[]],
-  b?: readonly [string, ...string[]],
-) {
-  const name = typeof a === 'string' ? a : undefined;
-  const values = typeof a === 'string' ? b : a;
-
-  if (values === undefined || values.length === 0) {
-    throw new Error('enum(): a non-empty list of values is required');
-  }
-
-  return fresh('varchar', name, values);
-}
-
-function integer<N extends string>(name: N): Fresh<N, number>;
-function integer(): Fresh<undefined, number>;
-function integer(name?: string) {
-  return fresh('integer', name);
-}
-
-/**
- * int8. A string in JS by default: that is what `pg` and `Bun.SQL` return, and no
- * precision is lost. A driver told to return `bigint` is matched by the
- * `bigint: true` infer option, which turns these columns into `bigint`.
- */
-function bigint<N extends string>(name: N): Fresh<N, string, undefined, false, true>;
-function bigint(): Fresh<undefined, string, undefined, false, true>;
-function bigint(name?: string) {
-  return fresh('bigint', name);
-}
-
-function boolean<N extends string>(name: N): Fresh<N, boolean>;
-function boolean(): Fresh<undefined, boolean>;
-function boolean(name?: string) {
-  return fresh('boolean', name);
-}
-
-interface NumericConfig {
-  precision?: number;
-  scale?: number;
-}
-
-/** numeric. A string in JS: no float error. */
-function numeric<N extends string>(name: N, config?: NumericConfig): Fresh<N, string>;
-function numeric(config?: NumericConfig): Fresh<undefined, string>;
-function numeric(a?: string | NumericConfig, b?: NumericConfig) {
-  const { name, config } = args<NumericConfig>(a, b);
-  const sqlType =
-    config?.precision === undefined
-      ? 'numeric'
-      : config.scale === undefined
-        ? `numeric(${config.precision})`
-        : `numeric(${config.precision}, ${config.scale})`;
-
-  return fresh(sqlType, name);
-}
-
-interface TimestampConfig {
-  withTimezone?: boolean;
-  precision?: number;
-}
-
-function timestamp<N extends string>(name: N, config?: TimestampConfig): Fresh<N, Date>;
-function timestamp(config?: TimestampConfig): Fresh<undefined, Date>;
-function timestamp(a?: string | TimestampConfig, b?: TimestampConfig) {
-  const { name, config } = args<TimestampConfig>(a, b);
-  const precision = config?.precision === undefined ? '' : `(${config.precision})`;
-  const tz = config?.withTimezone === true ? ' with time zone' : '';
-
-  return fresh(`timestamp${precision}${tz}`, name);
-}
-
-/**
- * `unknown` in TS, narrow it with `$type<T>()`. Values for writes go only
- * through `jsonb()` from `kysely-ddl`: drivers accept a raw jsonb
- * parameter differently, and the helper evens that out.
- */
-function jsonb<N extends string>(name: N): Fresh<N, unknown, undefined, true>;
-function jsonb(): Fresh<undefined, unknown, undefined, true>;
-function jsonb(name?: string) {
-  return fresh('jsonb', name);
-}
-
-// ── the builder set for the callback form ────────────────────────────────────
-
-/**
- * What arrives in `columns: t => ({ ... })`.
- *
- * Builders are not exported one by one: the only way to declare a column is the
- * callback. So the schema file has no import list to maintain with every new
- * column, and there is exactly one declaration form.
- */
-const columnBuilders = {
-  bigint,
-  boolean,
-  integer,
-  jsonb,
-  numeric,
-  timestamp,
-  enum: enumColumn,
-  uuid,
-  varchar,
-} as const;
-
-export { columnBuilders };
-export type ColumnBuilders = typeof columnBuilders;

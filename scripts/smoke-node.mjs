@@ -8,10 +8,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { Kysely, PostgresDialect } from 'kysely';
+import { Kysely, PostgresDialect, sql } from 'kysely';
 import pg from 'pg';
 
-import { defineTable, generateMigration, sql, writeMigration } from '../dist/index.js';
+import { defineTable, generateMigration, writeMigration } from '../dist/index.js';
 import { createMigrator, migrateToLatest } from '../dist/migrator/index.js';
 
 if (typeof globalThis.Bun !== 'undefined') {

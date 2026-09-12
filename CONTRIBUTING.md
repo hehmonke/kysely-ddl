@@ -40,12 +40,23 @@ The runner and provider tests run twice, through `PostgresDialect` over `pg` and
 through the `Bun.SQL` dialect in `test/helpers/bun-dialect.ts`, so that driver
 differences show up here rather than at a user's.
 
+CI runs the four checks twice as well: on the Kysely from the lockfile and on
+0.29.0, the oldest version `peerDependencies` allows, so that the floor stays a
+tested promise. `test/package.test.ts` checks that the two places agree, so
+raising the floor means changing both. To try the floor locally:
+
+```bash
+bun add -d kysely@0.29.0   # then the checks above; afterwards:
+git checkout -- package.json bun.lock && bun install --frozen-lockfile
+```
+
 ## Layout
 
 ```
 src/
   index.ts            the `kysely-ddl` entry point
-  table/              defineTable, column builders, sql`` expressions, identifier rules
+  table/              defineTable, the column builder base, sql`` expressions, identifier rules
+  table/column-types/ one file per column type; a modifier for some types only lives on its builder there
   generator/          snapshot, diff, SQL rendering, generateMigration
   migrator/store.ts   migration files on disk, exported from the root entry point
   migrator/index.ts   the `kysely-ddl/migrator` entry point: runner.ts and provider.ts
@@ -58,9 +69,9 @@ test/
 
 Dependencies point one way: `table` ◄── `generator` ◄── `migrator/store` ◄── the
 runner and the provider, while `kysely` depends on `table` alone. The root entry
-point imports `kysely` (for `jsonb()`) and no driver; `kysely-ddl/migrator` is
-separate so that a project which applies migrations some other way does not pull
-the runner in.
+point imports `kysely` (for `jsonb()` and to render `sql` fragments) and no
+driver; `kysely-ddl/migrator` is separate so that a project which applies
+migrations some other way does not pull the runner in.
 
 A table feature, a new column type or a constraint option, is added the same way
 every time: a field in `TableSpec` -> a field in the snapshot -> a branch in the

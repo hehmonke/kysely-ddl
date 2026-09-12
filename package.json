@@ -60,7 +60,7 @@
     "prepublishOnly": "bun run check"
   },
   "peerDependencies": {
-    "kysely": ">=0.28"
+    "kysely": ">=0.29"
   },
   "devDependencies": {
     "@oxlint/plugins": "^1.80.0",

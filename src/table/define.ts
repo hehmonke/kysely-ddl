@@ -9,9 +9,10 @@
  * Index and constraint names are optional as well, see `AUTO_NAMES`.
  */
 import { type SnakeCase, toSnakeCase } from './casing.ts';
-import { type AnyColumn, columnBuilders, type ColumnBuilders, type ColumnCfg, type ColumnSpec } from './columns.ts';
+import { columnBuilders, type ColumnBuilders } from './column-types/index.ts';
+import type { AnyColumn, ColumnCfg, ColumnSpec } from './columns.ts';
 import { assertIdentifier, autoName } from './identifier.ts';
-import { collectColumns, type ColumnRef, inArray, type Sql } from './sql.ts';
+import { collectColumns, columnRef, inArray, isSql, renderSql, type Sql } from './sql.ts';
 
 /**
  * Auto-name suffixes. The convention:
@@ -34,8 +35,8 @@ export const AUTO_NAMES = {
 
 // ── table types ──────────────────────────────────────────────────────────────
 
-/** Column config after its name has been resolved. */
-export interface ResolvedColumnCfg extends Omit<ColumnCfg, 'name'> {
+/** Column config after its name has been resolved; `typed` is builder state and stays behind. */
+export interface ResolvedColumnCfg extends Omit<ColumnCfg, 'name' | 'typed'> {
   readonly name: string;
 }
 
@@ -46,6 +47,7 @@ type ResolveName<K extends string, C extends AnyColumn> = C['_']['name'] extends
 export type ResolveColumns<TCols extends Record<string, AnyColumn>> = {
   readonly [K in keyof TCols & string]: {
     readonly name: ResolveName<K, TCols[K]>;
+    readonly kind: TCols[K]['_']['kind'];
     readonly data: TCols[K]['_']['data'];
     readonly notNull: TCols[K]['_']['notNull'];
     readonly hasDefault: TCols[K]['_']['hasDefault'];
@@ -104,7 +106,7 @@ export interface Table<
 export type AnyTable = Table<string, Record<string, ResolvedColumnCfg>>;
 
 /** Column references for the callbacks in checks and partial indexes. */
-type Refs<TCols> = { readonly [K in keyof TCols]: ColumnRef };
+type Refs<TCols> = { readonly [K in keyof TCols]: Sql };
 
 // ── options ──────────────────────────────────────────────────────────────────
 
@@ -194,6 +196,19 @@ export interface TableOptions<
   }[];
 }
 
+/**
+ * A fragment that cannot be rendered is a mistake in the schema. It is caught
+ * here, where the schema is defined and the table and column are known, not
+ * later in the generator.
+ */
+function assertRenders(expression: Sql, what: string): void {
+  try {
+    renderSql(expression);
+  } catch (error) {
+    throw new Error(`${what}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+}
+
 // ── defineTable ──────────────────────────────────────────────────────────────
 
 export function defineTable<TName extends string, TCols extends Record<string, AnyColumn>>(
@@ -204,7 +219,7 @@ export function defineTable<TName extends string, TCols extends Record<string, A
 
   const columns: ResolvedColumn[] = [];
   const dbName: Record<string, string> = {};
-  const refs: Record<string, ColumnRef> = {};
+  const refs: Record<string, Sql> = {};
 
   for (const [key, builder] of Object.entries(options.columns(columnBuilders))) {
     const resolved = builder.spec.name ?? toSnakeCase(key);
@@ -217,9 +232,13 @@ export function defineTable<TName extends string, TCols extends Record<string, A
       );
     }
 
+    if (isSql(builder.spec.default)) {
+      assertRenders(builder.spec.default, `${name}.${key}: default`);
+    }
+
     columns.push({ ...builder.spec, name: resolved, key });
     dbName[key] = resolved;
-    refs[key] = { kind: 'column', name: resolved };
+    refs[key] = columnRef(resolved);
   }
 
   const seenColumns = new Set<string>();
@@ -263,12 +282,18 @@ export function defineTable<TName extends string, TCols extends Record<string, A
   // ── indexes ────────────────────────────────────────────────────────────────
   const indexes = (options.indexes ?? []).map(index => {
     const indexColumns = toDb(index.columns);
+    const indexName = resolveName(index.name, indexColumns, AUTO_NAMES.index, 'index');
+    const where = index.where !== undefined ? index.where(typedRefs) : undefined;
+
+    if (where !== undefined) {
+      assertRenders(where, `${name}: index ${indexName}`);
+    }
 
     return {
-      name: resolveName(index.name, indexColumns, AUTO_NAMES.index, 'index'),
+      name: indexName,
       unique: index.unique ?? false,
       columns: indexColumns,
-      where: index.where !== undefined ? index.where(typedRefs) : undefined,
+      where,
       concurrently: index.concurrently ?? false,
     };
   });
@@ -325,7 +350,7 @@ export function defineTable<TName extends string, TCols extends Record<string, A
     }
     checks.push({
       name: autoName([name, column.name], AUTO_NAMES.check),
-      expression: inArray({ kind: 'column', name: column.name }, column.enumValues),
+      expression: inArray(columnRef(column.name), column.enumValues),
     });
   }
 
@@ -340,10 +365,9 @@ export function defineTable<TName extends string, TCols extends Record<string, A
       );
     }
 
-    checks.push({
-      name: resolveName(check.name, referenced, AUTO_NAMES.check, 'check'),
-      expression,
-    });
+    const checkName = resolveName(check.name, referenced, AUTO_NAMES.check, 'check');
+    assertRenders(expression, `${name}: check ${checkName}`);
+    checks.push({ name: checkName, expression });
   }
 
   // ── name uniqueness ────────────────────────────────────────────────────────

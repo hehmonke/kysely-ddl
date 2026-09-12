@@ -22,7 +22,7 @@ bun add kysely-ddl kysely
 npm install kysely-ddl kysely
 ```
 
-`kysely >= 0.28` is a peer dependency. The driver is yours: `pg` under Node or
+`kysely >= 0.29` is a peer dependency. The driver is yours: `pg` under Node or
 Bun, or any PostgreSQL dialect for Kysely. Runtime: Node >= 20 or Bun >= 1.2.
 
 ## Entry points
@@ -37,7 +37,8 @@ Bun, or any PostgreSQL dialect for Kysely. Runtime: Node >= 20 or Bun >= 1.2.
 `schema.ts`, the tables:
 
 ```ts
-import { defineTable, ref, sql } from 'kysely-ddl';
+import { sql } from 'kysely';
+import { defineTable, ref } from 'kysely-ddl';
 
 export const userTable = defineTable({
   name: 'user',
@@ -122,9 +123,23 @@ A hybrid: columns as chains, everything else as a declarative block.
 | | |
 |---|---|
 | column types | `t.uuid` `t.varchar({ length })` `t.integer` `t.bigint` `t.boolean` `t.numeric({ precision, scale })` `t.timestamp({ withTimezone, precision })` `t.jsonb` `t.enum([...])` |
-| modifiers | `.notNull()` `.default(v \| sql)` `.defaultNow()` `.array()` `.$type<T>()` `.generatedAlwaysAsIdentity()` |
+| modifiers | `.notNull()` `.default(v \| sql)` `.array()` `.$type<T>()`; on a timestamp `.defaultNow()`, on an integer or bigint `.generatedAlwaysAsIdentity()` |
 | table | `primaryKey` (composite too), `uniques`, `indexes` (unique, partial via `where`, built online via `concurrently`), `foreignKeys` (`onDelete` / `onUpdate`), `checks`; names are optional everywhere |
-| expressions | `` sql`...` `` with column and literal interpolation, `inArray(c.status, [...])` |
+| expressions | Kysely's `` sql`...` ``: `${c.column}` is the column, `${value}` an inlined literal, fragments nest; `inArray(c.status, [...])` |
+
+`sql` is Kysely's own template tag, imported from `kysely`; `kysely-ddl` has no
+`sql` of its own. In a query `${value}` becomes a bind parameter; DDL has none,
+so here it is inlined as an escaped literal, and `${c.column}` renders as the
+quoted column name. Fragments compose the way they do in Kysely: a fragment
+inside a fragment, `sql.join`, `sql.lit`, `sql.raw`. A value that cannot be
+inlined, a `Date`, an object, an array, is an error at `defineTable`, naming the
+table and the column, index or check.
+
+Each column type has a builder of its own, and a modifier that applies to some
+types only is offered exactly there: `defaultNow()` on a timestamp,
+`generatedAlwaysAsIdentity()` on an integer or bigint. An array column is a plain
+column, neither applies to it. The chain keeps its builder, so
+`t.timestamp().notNull().defaultNow()` works.
 
 When a column name is not given, it is derived from the property name with the
 same snake_case rule as Kysely's `CamelCasePlugin`: `createdAt` -> `created_at`,

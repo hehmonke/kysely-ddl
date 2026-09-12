@@ -4,6 +4,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the `kysely` peer dependency is `>=0.29`. `kysely-ddl/migrator`
+  takes the `Migration` and `MigrationProvider` types from `kysely/migration`,
+  a subpath that exists since Kysely 0.29.0, so the declared `>=0.28` was never
+  true for that entry point. CI now runs the checks on 0.29.0 as well as on the
+  lockfile version.
+- **Breaking:** expressions are Kysely's own `sql` template tag, imported from
+  `kysely`; `kysely-ddl` no longer exports a `sql` of its own. The `c.column`
+  references in `checks` and `where` are column fragments, `${value}` is inlined
+  as an escaped literal (DDL has no bind parameters) and fragments nest: a
+  fragment inside a fragment, `sql.join`, `sql.lit` and `sql.raw` all work.
+  Rendering goes through Kysely's Postgres query compiler. The `Sql` type is now
+  an alias of `RawBuilder<unknown>`; the `ColumnRef`, `Literal` and `SqlChunk`
+  types are gone. `inArray`, `renderSql`, `collectColumns`, `quoteIdentifier`
+  and `quoteLiteral` stay.
+- `defineTable` renders every default, check and partial index condition once,
+  at definition time: a value that cannot be inlined (a `Date`, an object, an
+  array) is an error naming the table and the column, index or check, instead
+  of a failure later in the generator.
+- **Breaking:** one builder per column type, in `src/table/column-types/`.
+  `defaultNow()` exists on timestamp columns only and
+  `generatedAlwaysAsIdentity()` on integer and bigint columns only; an array
+  column is a plain column and has neither. The chain keeps its builder, so
+  `t.timestamp().notNull().defaultNow()` works. The column config and spec
+  carry `kind`, the base postgres type, exported as `ColumnKind`;
+  `TimestampColumnBuilder` and `IntegerColumnBuilder` are exported; `AnyColumn`
+  is now the `{ _, spec }` shape `defineTable` needs rather than the builder
+  class.
+
 ## [0.3.0] — 2026-09-12
 
 ### Added

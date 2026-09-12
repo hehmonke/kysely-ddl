@@ -1,34 +1,45 @@
 /**
- * A minimal SQL fragment: everything needed for defaults, check expressions
- * and partial index conditions.
+ * SQL fragments for defaults, check expressions and partial index conditions:
+ * kysely's own `sql` template tag, rendered here into a plain string.
  *
- * The fragment is stored as chunks rather than a string, so that a column
- * reference can be rendered with its DATABASE NAME (`"user_id"`) instead of
- * the property name.
+ * DDL takes no bind parameters, so every `${value}` is inlined as an escaped
+ * literal, and a column reference, `sql.ref('user_id')` or the `c.userId` of a
+ * `defineTable` callback, renders as a quoted identifier. The rendering is done
+ * by kysely's Postgres query compiler, so identifiers and strings are escaped
+ * exactly the way kysely escapes them in queries, and fragments compose the
+ * way they do there: a fragment inside a fragment, `sql.join`, `sql.lit`,
+ * `sql.raw` all work.
  */
+import {
+  ColumnNode,
+  createQueryId,
+  createRawBuilder,
+  isOperationNodeSource,
+  type OperationNode,
+  PostgresQueryCompiler,
+  type RawBuilder,
+  RawNode,
+  ReferenceNode,
+  sql,
+} from 'kysely';
 
-/** A column reference inside an expression. */
-export interface ColumnRef {
-  readonly kind: 'column';
-  /** The column name in the database. */
-  readonly name: string;
-}
-
-/** A literal that must be escaped when rendered. */
-export interface Literal {
-  readonly kind: 'literal';
-  readonly value: string | number | boolean | null;
-}
-
-export type SqlChunk = string | ColumnRef | Literal;
-
-export interface Sql {
-  readonly kind: 'sql';
-  readonly chunks: readonly SqlChunk[];
-}
+/** An SQL fragment: what `sql\`...\`` returns. */
+export type Sql = RawBuilder<unknown>;
 
 export function isSql(value: unknown): value is Sql {
-  return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'sql';
+  return isOperationNodeSource(value);
+}
+
+/**
+ * A reference to a column by its exact database name: what the `c.column` refs
+ * in a `defineTable` callback are. `sql.ref()` would parse the string instead,
+ * reading `'a.b'` as table `a`, column `b`.
+ */
+export function columnRef(name: string): Sql {
+  return createRawBuilder({
+    queryId: createQueryId(),
+    rawNode: RawNode.createWithChild(ReferenceNode.create(ColumnNode.create(name))),
+  });
 }
 
 /** For error messages: objects as JSON, everything else as is. */
@@ -48,64 +59,41 @@ function describeValue(value: unknown): string {
   }
 }
 
-function toChunk(value: unknown): SqlChunk {
-  if (isSql(value)) {
-    // nested fragments would be expanded on render; a marker is enough here
-    throw new Error('nested sql`` is not supported: build the expression as a single template');
-  }
-
-  if (typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'column') {
-    return value as ColumnRef;
-  }
-
-  if (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    value === null
-  ) {
-    return { kind: 'literal', value };
-  }
-
-  throw new Error(`cannot interpolate into sql\`\`: ${describeValue(value)}`);
-}
+const INLINED = new Set(['string', 'number', 'boolean', 'bigint']);
 
 /**
- * ```ts
- * sql`${c.delta} <> 0`
- * sql`uuidv7()`
- * ```
+ * The Postgres compiler with one difference: `${value}` is not a bind parameter,
+ * DDL has none, but an inlined, escaped literal. Only what makes sense in a
+ * schema is accepted: a string, a number, a boolean, a bigint, null. Anything
+ * else is a slip, a Date or a column builder interpolated by mistake; an array
+ * is most likely a list that wants `inArray()` or `sql.join()`.
  */
-export function sql(strings: TemplateStringsArray, ...values: unknown[]): Sql {
-  const chunks: SqlChunk[] = [];
+class DdlCompiler extends PostgresQueryCompiler {
+  protected override appendValue(parameter: unknown): void {
+    this.appendImmediateValue(parameter);
+  }
 
-  strings.forEach((part, i) => {
-    if (part) {
-      chunks.push(part);
+  protected override appendImmediateValue(value: unknown): void {
+    if (value === null) {
+      // upper case like `quoteLiteral`: a `${null}` and a plain `.default(null)` render the same
+      this.append('NULL');
+    } else if (INLINED.has(typeof value)) {
+      super.appendImmediateValue(value);
+    } else {
+      const hint = Array.isArray(value) ? ', for a list use inArray() or sql.join()' : '';
+      throw new Error(`cannot interpolate into sql\`\`: ${describeValue(value)}${hint}`);
     }
+  }
+}
 
-    if (i < values.length) {
-      chunks.push(toChunk(values[i]));
-    }
-  });
-
-  return { kind: 'sql', chunks };
+/** Expands the fragment into an SQL string. */
+export function renderSql(expr: Sql): string {
+  return new DdlCompiler().compileQuery(expr.toOperationNode(), createQueryId()).sql;
 }
 
 /** `"status" in ('new', 'closed')`: the most common form of a check in real schemas. */
-export function inArray(column: ColumnRef, values: readonly (string | number)[]): Sql {
-  const chunks: SqlChunk[] = [column, ' in ('];
-
-  values.forEach((value, i) => {
-    if (i > 0) {
-      chunks.push(', ');
-    }
-    chunks.push({ kind: 'literal', value });
-  });
-
-  chunks.push(')');
-
-  return { kind: 'sql', chunks };
+export function inArray(column: Sql, values: readonly (string | number)[]): Sql {
+  return sql`${column} in (${sql.join(values)})`;
 }
 
 /**
@@ -115,11 +103,19 @@ export function inArray(column: ColumnRef, values: readonly (string | number)[])
 export function collectColumns(expr: Sql): string[] {
   const names: string[] = [];
 
-  for (const chunk of expr.chunks) {
-    if (typeof chunk !== 'string' && chunk.kind === 'column' && !names.includes(chunk.name)) {
-      names.push(chunk.name);
+  const walk = (node: OperationNode): void => {
+    if (ReferenceNode.is(node) && ColumnNode.is(node.column)) {
+      const { name } = node.column.column;
+
+      if (!names.includes(name)) {
+        names.push(name);
+      }
+    } else if (RawNode.is(node)) {
+      node.parameters.forEach(walk);
     }
-  }
+  };
+
+  walk(expr.toOperationNode());
 
   return names;
 }
@@ -142,21 +138,4 @@ export function quoteLiteral(value: string | number | boolean | null): string {
   }
 
   return `'${value.replace(/'/g, "''")}'`;
-}
-
-/** Expands the fragment into an SQL string. */
-export function renderSql(expr: Sql): string {
-  return expr.chunks
-    .map(chunk => {
-      if (typeof chunk === 'string') {
-        return chunk;
-      }
-
-      if (chunk.kind === 'column') {
-        return quoteIdentifier(chunk.name);
-      }
-
-      return quoteLiteral(chunk.value);
-    })
-    .join('');
 }

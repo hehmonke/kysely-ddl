@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import { type AnyTable, AUTO_NAMES, defineTable, ref, renderSql, sql, toSnakeCase } from '../src/index.ts';
+import { sql } from 'kysely';
+
+import { type AnyTable, AUTO_NAMES, defineTable, ref, renderSql, toSnakeCase } from '../src/index.ts';
 
 const userTable = defineTable({
   name: 'user',
@@ -205,5 +207,64 @@ describe('defineTable: concurrently', () => {
       ['t_a_idx', true],
       ['t_b_idx', false],
     ]);
+  });
+});
+
+describe('defineTable: expressions', () => {
+  test('a check may be assembled from fragments; the name covers every column referenced', () => {
+    const table = defineTable({
+      name: 'account',
+      columns: t => ({ balance: t.numeric(), reserved: t.numeric() }),
+      checks: [
+        {
+          expression: c => {
+            const positive = sql`${c.balance} >= 0`;
+
+            return sql`${positive} and ${c.reserved} <= ${c.balance}`;
+          },
+        },
+      ],
+    });
+    expect(table.spec.checks[0]?.name).toBe('account_balance_reserved_check');
+    expect(renderSql(table.spec.checks[0]!.expression)).toBe('"balance" >= 0 and "reserved" <= "balance"');
+  });
+
+  test('a default that cannot be rendered is reported with the table and column', () => {
+    expect(() =>
+      defineTable({
+        name: 't',
+        columns: t => ({ since: t.timestamp().default(sql`${new Date(0)}`) }),
+      }),
+    ).toThrow(/^t\.since: default: cannot interpolate into sql``/);
+  });
+
+  test('a check that cannot be rendered is reported with the table and the check name', () => {
+    expect(() =>
+      defineTable({
+        name: 't',
+        columns: t => ({ a: t.integer() }),
+        checks: [{ expression: c => sql`${c.a} = ${{ nope: 1 }}` }],
+      }),
+    ).toThrow(/^t: check t_a_check: cannot interpolate into sql``: \{"nope":1\}/);
+  });
+
+  test('a partial index condition that cannot be rendered is reported with the index name', () => {
+    expect(() =>
+      defineTable({
+        name: 't',
+        columns: t => ({ a: t.integer() }),
+        indexes: [{ columns: ['a'], where: c => sql`${c.a} in ${[1, 2]}` }],
+      }),
+    ).toThrow(/^t: index t_a_idx: cannot interpolate into sql``: \[1,2\], for a list use inArray\(\) or sql\.join\(\)/);
+  });
+
+  test('a column reference renders the exact database name, even with a dot in it', () => {
+    const table = defineTable({
+      name: 't',
+      columns: t => ({ odd: t.integer('a.b') }),
+      checks: [{ expression: c => sql`${c.odd} > 0` }],
+    });
+    expect(renderSql(table.spec.checks[0]!.expression)).toBe('"a.b" > 0');
+    expect(table.spec.checks[0]?.name).toBe('t_a.b_check');
   });
 });
