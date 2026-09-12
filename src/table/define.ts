@@ -105,6 +105,21 @@ export interface Table<
 
 export type AnyTable = Table<string, Record<string, ResolvedColumnCfg>>;
 
+/**
+ * The mark `isTable` looks for. `Symbol.for`, not a fresh symbol: a schema
+ * package of its own brings its own copy of kysely-ddl, and a table defined
+ * there must still be recognized here.
+ */
+const TABLE_BRAND = Symbol.for('kysely-ddl.table');
+
+/**
+ * Is this a table? By the brand, not by the shape: `loadTables` walks whole
+ * modules and must not mistake a config object for a table.
+ */
+export function isTable(value: unknown): value is AnyTable {
+  return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[TABLE_BRAND] === true;
+}
+
 /** Column references for the callbacks in checks and partial indexes. */
 type Refs<TCols> = { readonly [K in keyof TCols]: Sql };
 
@@ -429,5 +444,10 @@ export function defineTable<TName extends string, TCols extends Record<string, A
 
   const spec: TableSpec = { name, columns, primaryKey, uniques, indexes, foreignKeys, checks };
 
-  return { _: { name, columns: {} as ResolveColumns<TCols> }, spec };
+  // the brand is not part of `Table`: it is how `isTable` recognizes the object,
+  // not something to write by hand, so it stays out of the public type
+  return { _: { name, columns: {} as ResolveColumns<TCols> }, spec, [TABLE_BRAND]: true } as Table<
+    TName,
+    ResolveColumns<TCols>
+  >;
 }

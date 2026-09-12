@@ -7,10 +7,12 @@
  *
  *   table ◄── generator ◄── migrator/store ◄── migrator (runner, provider)
  *   table ◄── kysely (row types, jsonb values)
+ *   table ◄── loader (schema files found by glob)
  *
  * Entry points:
  *
  *   kysely-ddl           — this file: tables, generation, migration files on disk,
+ *                          `loadTables` for schema files found by glob,
  *                          `InferKyselyTable` / `InferKyselyDatabase`, `jsonb` / `jsonbArray`
  *   kysely-ddl/migrator  — running migrations: `createMigrator` / `migrateToLatest`
  *                          and `sqlFileMigrationProvider`; separate, so that a project
@@ -30,6 +32,8 @@ export type { ColumnSnapshot, Snapshot, TableSnapshot } from './generator/snapsh
 export type { InferKyselyDatabase, InferKyselyTable, InferOptions } from './kysely/infer.ts';
 export { jsonb, jsonbArray } from './kysely/json.ts';
 export type { Jsonb } from './kysely/json.ts';
+export { loadTables } from './loader/tables.ts';
+export type { LoadTablesOptions } from './loader/tables.ts';
 export {
   CONCURRENTLY_SUFFIX,
   listMigrations,
@@ -52,7 +56,7 @@ export { IntegerColumnBuilder } from './table/column-types/integer.ts';
 export { TimestampColumnBuilder } from './table/column-types/timestamp.ts';
 export { ColumnBuilder } from './table/columns.ts';
 export type { AnyColumn, ColumnCfg, ColumnKind, ColumnSpec, DefaultValue } from './table/columns.ts';
-export { AUTO_NAMES, defineTable, ref } from './table/define.ts';
+export { AUTO_NAMES, defineTable, isTable, ref } from './table/define.ts';
 export type {
   AnyTable,
   ForeignKeyDef,

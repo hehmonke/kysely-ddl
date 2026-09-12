@@ -347,6 +347,52 @@ const result = generateMigration(tables, previousSnapshot);
 // result.changes    — the parsed changes, handy for a "what changed" summary
 ```
 
+### Pointing at the schema files: `loadTables`
+
+Listing the tables by hand stops scaling once they live in a package of their
+own. `loadTables` takes glob patterns instead:
+
+```ts
+import { generateMigration, loadTables, readLatestSnapshot, writeMigration } from 'kysely-ddl';
+
+const dir = './migrations';
+const tables = await loadTables('../database-schema-core/src/lib/tables/**/*.table.ts');
+const result = generateMigration(tables, readLatestSnapshot(dir));
+```
+
+Patterns resolve against `process.cwd()`, or against `cwd` when it is given; a
+list is accepted, and a pattern starting with `!` excludes:
+
+```ts
+await loadTables(['schema/**/*.ts', '!schema/**/*.test.ts'], { cwd: import.meta.dirname });
+```
+
+`*`, `**`, `?`, `{a,b}` and the leading `!` are supported; character classes
+(`[a-z]`) are not and match themselves. Wildcards do not match entries starting
+with a dot, and `**` does not descend into `node_modules` or dot-directories:
+name such a directory explicitly to reach inside.
+
+Every matched file is imported and every exported table collected, sorted by
+table name, so the result does not depend on where a table lives. A table
+re-exported through a barrel is counted once. Two different tables with the same
+database name are an error, as they are for `generateMigration`.
+
+The loading is strict on purpose: a table the pattern misses is not merely
+absent, the diff sees it as dropped. So each of these is an error rather than a
+warning:
+
+- nothing matches the patterns, or nothing among the matched files exports a table;
+- a matched file fails to import — the message names the file;
+- a foreign key points at a table none of the matched files exports: the pattern
+  is too narrow, and the migration would reference a table the snapshot does not have.
+
+Importing `.ts` at runtime is the runtime's business: Bun imports it directly,
+Node needs type stripping (on by default since 22.18, `--experimental-strip-types`
+before that) or a loader such as `tsx`.
+
+Row types still come from a static import: `InferKyselyDatabase<typeof schema>`
+needs names TypeScript can see, and a glob is resolved when the script runs.
+
 ### Layout on disk
 
 ```

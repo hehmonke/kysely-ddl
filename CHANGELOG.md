@@ -4,6 +4,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Added
+
+- `loadTables(patterns, options?)`: the tables for `generateMigration`, found by
+  glob instead of listed by hand —
+  `await loadTables('../schema-core/src/lib/tables/**/*.table.ts')`. Takes one
+  pattern or a list, resolves them against `cwd`, supports `*`, `**`, `?`,
+  `{a,b}` and `!` exclusions, and has no dependency of its own. Every matched
+  file is imported and every exported table collected, sorted by table name; a
+  barrel re-export counts once. Strict, because a missed table reads as a
+  dropped one: an empty match, a file that fails to import, two tables with the
+  same database name and a foreign key to a table outside the match are all
+  errors.
+- `isTable(value)`: what `loadTables` uses to pick tables out of a module. Tables
+  carry a `Symbol.for` brand now, so a table defined in a package with its own
+  copy of kysely-ddl is still recognized.
+
 ## [0.6.0] — 2026-09-12
 
 ### Changed

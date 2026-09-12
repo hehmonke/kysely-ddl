@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { sql } from 'kysely';
 
-import { type AnyTable, AUTO_NAMES, defineTable, ref, renderSql, toSnakeCase } from '../src/index.ts';
+import { type AnyTable, AUTO_NAMES, defineTable, isTable, ref, renderSql, toSnakeCase } from '../src/index.ts';
 
 const userTable = defineTable({
   name: 'user',
@@ -272,5 +272,20 @@ describe('defineTable: expressions', () => {
     });
     expect(renderSql(table.spec.checks[0]!.expression)).toBe('"a.b" > 0');
     expect(table.spec.checks[0]?.name).toBe('t_a.b_check');
+  });
+});
+
+describe('isTable', () => {
+  test('true for a table, false for anything shaped like one', () => {
+    expect(isTable(userTable)).toBe(true);
+    expect(isTable({ _: { name: 'user', columns: {} }, spec: userTable.spec })).toBe(false);
+    expect(isTable(undefined)).toBe(false);
+    expect(isTable(null)).toBe(false);
+    expect(isTable('user')).toBe(false);
+  });
+
+  test('the brand is shared by `Symbol.for`, so another copy of the package is recognized', () => {
+    const other = { spec: userTable.spec, [Symbol.for('kysely-ddl.table')]: true };
+    expect(isTable(other)).toBe(true);
   });
 });

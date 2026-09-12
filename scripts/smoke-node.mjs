@@ -11,7 +11,7 @@ import path from 'node:path';
 import { Kysely, PostgresDialect, sql } from 'kysely';
 import pg from 'pg';
 
-import { defineTable, generateMigration, writeMigration } from '../dist/index.js';
+import { defineTable, generateMigration, loadTables, writeMigration } from '../dist/index.js';
 import { createMigrator, migrateToLatest } from '../dist/migrator/index.js';
 
 if (typeof globalThis.Bun !== 'undefined') {
@@ -58,6 +58,20 @@ try {
 
   await db.insertInto('user').values({ nickname: 'smoke' }).execute();
   assert.deepEqual(await db.selectFrom('user').select('nickname').execute(), [{ nickname: 'smoke' }]);
+
+  // loadTables under Node: a glob, a dynamic import of the found file, and the
+  // brand recognized across a module the package did not load itself
+  const schemaDir = path.join(dir, 'schema');
+  fs.mkdirSync(schemaDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(schemaDir, 'session.table.mjs'),
+    `import { defineTable } from ${JSON.stringify(new URL('../dist/index.js', import.meta.url).href)};\n` +
+      "export const sessionTable = defineTable({ name: 'session', " +
+      "columns: t => ({ id: t.uuid().notNull() }), primaryKey: { columns: ['id'] } });\n",
+  );
+
+  const loaded = await loadTables('**/*.table.mjs', { cwd: schemaDir });
+  assert.deepEqual(loaded.map(table => table.spec.name), ['session']);
 
   console.log(`smoke-node: ok (${process.version}, migration ${init} applied via pg)`);
 } finally {
