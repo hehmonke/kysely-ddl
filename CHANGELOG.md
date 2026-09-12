@@ -4,6 +4,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the `inferKyselyTable` and `inferKyselyDatabase` types are
+  `InferKyselyTable` and `InferKyselyDatabase`: PascalCase, like every other
+  type. Only the case changes.
+
 ## [0.5.0] — 2026-09-12
 
 ### Changed

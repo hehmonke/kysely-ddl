@@ -2,8 +2,8 @@
  * Table types for Kysely, like zod's `z.infer`:
  *
  * ```ts
- * type UserTable = inferKyselyTable<typeof userTable>;
- * type DB = inferKyselyDatabase<typeof schema>;
+ * type UserTable = InferKyselyTable<typeof userTable>;
+ * type DB = InferKyselyDatabase<typeof schema>;
  *
  * const db = new Kysely<DB>({ dialect });
  * ```
@@ -17,12 +17,12 @@
  * ```ts
  * // Kysely runs with CamelCasePlugin: column and table keys become camelCase,
  * // exactly as the plugin rewrites them with default options
- * type DB = inferKyselyDatabase<typeof schema, { camelCase: true }>;
+ * type DB = InferKyselyDatabase<typeof schema, { camelCase: true }>;
  * const db = new Kysely<DB>({ dialect, plugins: [new CamelCasePlugin()] });
  *
  * // the driver returns int8 as BigInt (Bun.SQL with `{ bigint: true }`, pg with a
  * // type parser): bigint() columns become bigint, bigint().array() ones bigint[]
- * type DB = inferKyselyDatabase<typeof schema, { bigint: true }>;
+ * type DB = InferKyselyDatabase<typeof schema, { bigint: true }>;
  * ```
  *
  * `kysely` is imported as a type only; there is no runtime dependency.
@@ -34,7 +34,7 @@ import type { Jsonb } from './json.ts';
 
 import type { ColumnType } from 'kysely';
 
-/** The second parameter of `inferKyselyTable` and `inferKyselyDatabase`. Everything is off by default. */
+/** The second parameter of `InferKyselyTable` and `InferKyselyDatabase`. Everything is off by default. */
 export interface InferOptions {
   /**
    * Column and table keys as `CamelCasePlugin` rewrites them: `created_at` ->
@@ -101,7 +101,7 @@ type Insert<C extends ResolvedColumnCfg, O extends InferOptions> = C['identity']
       : Written<C, O>
     : Written<C, O> | null | undefined;
 
-export type inferKyselyTable<T extends Table, O extends InferOptions = InferOptions> = {
+export type InferKyselyTable<T extends Table, O extends InferOptions = InferOptions> = {
   [K in keyof Cols<T> as Key<Cols<T>[K]['name'], O>]: ColumnType<
     Select<Cols<T>[K], O>,
     Insert<Cols<T>[K], O>,
@@ -111,11 +111,11 @@ export type inferKyselyTable<T extends Table, O extends InferOptions = InferOpti
 
 /**
  * The interface of the whole database from a schema module: the key is the table
- * name, the value is `inferKyselyTable`. Anything that is not a table (constants,
+ * name, the value is `InferKyselyTable`. Anything that is not a table (constants,
  * types, zod schemas) is filtered out.
  */
-export type inferKyselyDatabase<TSchema, O extends InferOptions = InferOptions> = {
+export type InferKyselyDatabase<TSchema, O extends InferOptions = InferOptions> = {
   [K in keyof TSchema as TSchema[K] extends Table ? Key<TSchema[K]['_']['name'], O> : never]: TSchema[K] extends Table
-    ? inferKyselyTable<TSchema[K], O>
+    ? InferKyselyTable<TSchema[K], O>
     : never;
 };

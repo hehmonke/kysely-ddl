@@ -60,7 +60,7 @@ src/
   generator/          snapshot, diff, SQL rendering, generateMigration
   migrator/store.ts   migration files on disk, exported from the root entry point
   migrator/index.ts   the `kysely-ddl/migrator` entry point: runner.ts and provider.ts
-  kysely/             inferKyselyTable / inferKyselyDatabase, jsonb() / jsonbArray()
+  kysely/             InferKyselyTable / InferKyselyDatabase, jsonb() / jsonbArray()
 test/
   *.test.ts           bun tests; the integration ones need DATABASE_URL
   types.test-d.ts     type-level checks, read by tsc only

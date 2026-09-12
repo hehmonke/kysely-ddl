@@ -29,7 +29,7 @@ Bun, or any PostgreSQL dialect for Kysely. Runtime: Node >= 20 or Bun >= 1.2.
 
 | import | contents |
 |---|---|
-| `kysely-ddl` | table definitions, migration generation, migration files on disk, `inferKyselyTable` / `inferKyselyDatabase`, `jsonb` / `jsonbArray` |
+| `kysely-ddl` | table definitions, migration generation, migration files on disk, `InferKyselyTable` / `InferKyselyDatabase`, `jsonb` / `jsonbArray` |
 | `kysely-ddl/migrator` | running migrations: `createMigrator` / `migrateToLatest` and `sqlFileMigrationProvider`. A separate entry point, so that a project which applies its migrations some other way does not pull the runner in |
 
 ## Quick start
@@ -106,10 +106,10 @@ try {
 Types for queries:
 
 ```ts
-import type { inferKyselyDatabase } from 'kysely-ddl';
+import type { InferKyselyDatabase } from 'kysely-ddl';
 import * as schema from './schema';
 
-type DB = inferKyselyDatabase<typeof schema>;
+type DB = InferKyselyDatabase<typeof schema>;
 const db = new Kysely<DB>({ dialect });
 
 const rows = await db.selectFrom('user').select(['nickname', 'created_at']).execute();
@@ -225,11 +225,11 @@ welcome; [CONTRIBUTING.md](CONTRIBUTING.md) describes how such a feature is adde
 ## Types for Kysely
 
 ```ts
-import type { inferKyselyDatabase, inferKyselyTable } from 'kysely-ddl';
+import type { InferKyselyDatabase, InferKyselyTable } from 'kysely-ddl';
 import type { Insertable, Selectable } from 'kysely';
 
-type UserTable = inferKyselyTable<typeof userTable>;
-type DB = inferKyselyDatabase<typeof schema>; // anything that is not a table is filtered out
+type UserTable = InferKyselyTable<typeof userTable>;
+type DB = InferKyselyDatabase<typeof schema>; // anything that is not a table is filtered out
 
 type UserRow = Selectable<UserTable>;
 type NewUser = Insertable<UserTable>;
@@ -258,7 +258,7 @@ either `infer` type:
 ```ts
 import { CamelCasePlugin, Kysely } from 'kysely';
 
-type DB = inferKyselyDatabase<typeof schema, { camelCase: true }>;
+type DB = InferKyselyDatabase<typeof schema, { camelCase: true }>;
 const db = new Kysely<DB>({ dialect, plugins: [new CamelCasePlugin()] });
 
 await db.selectFrom('auditLog').select(['userId', 'happenedAt']).execute();
@@ -296,7 +296,7 @@ const INT8_ARRAY = 1016 as Parameters<typeof pg.types.getTypeParser>[0];
 const parseInt8Array = pg.types.getTypeParser(INT8_ARRAY) as (value: string) => (string | null)[];
 pg.types.setTypeParser(INT8_ARRAY, value => parseInt8Array(value).map(item => (item === null ? null : BigInt(item))));
 
-type DB = inferKyselyDatabase<typeof schema, { bigint: true }>;
+type DB = InferKyselyDatabase<typeof schema, { bigint: true }>;
 // together with CamelCasePlugin: { camelCase: true, bigint: true }
 
 const row = await db.selectFrom('ledger').select(['amount', 'history']).executeTakeFirstOrThrow();

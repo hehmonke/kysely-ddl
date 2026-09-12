@@ -7,8 +7,8 @@ import { type Insertable, type InsertObject, type Selectable, sql, type UpdateOb
 import {
   type CamelCase,
   defineTable,
-  type inferKyselyDatabase,
-  type inferKyselyTable,
+  type InferKyselyDatabase,
+  type InferKyselyTable,
   type Jsonb,
   jsonb,
   jsonbArray,
@@ -40,8 +40,8 @@ const userTable = defineTable({
 
 const schema = { userTable, NOT_A_TABLE: 42, helper: () => 1 };
 
-type UserTable = inferKyselyTable<typeof userTable>;
-type DB = inferKyselyDatabase<typeof schema>;
+type UserTable = InferKyselyTable<typeof userTable>;
+type DB = InferKyselyDatabase<typeof schema>;
 
 export type Tests = [
   // the table name and column names are literals derived from properties
@@ -129,8 +129,8 @@ const documentTable = defineTable({
   primaryKey: { columns: ['id'] },
 });
 
-type DocumentTable = inferKyselyTable<typeof documentTable>;
-type DocumentDB = inferKyselyDatabase<{ documentTable: typeof documentTable }>;
+type DocumentTable = InferKyselyTable<typeof documentTable>;
+type DocumentDB = InferKyselyDatabase<{ documentTable: typeof documentTable }>;
 
 export type JsonbTests = [
   Expect<
@@ -219,12 +219,12 @@ const auditLogTable = defineTable({
   primaryKey: { columns: ['id'] },
 });
 
-type CamelUser = inferKyselyTable<typeof userTable, { camelCase: true }>;
-type CamelDB = inferKyselyDatabase<
+type CamelUser = InferKyselyTable<typeof userTable, { camelCase: true }>;
+type CamelDB = InferKyselyDatabase<
   { userTable: typeof userTable; auditLogTable: typeof auditLogTable; other: 1 },
   { camelCase: true }
 >;
-type SnakeDB = inferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable }>;
+type SnakeDB = InferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable }>;
 
 export type CamelModeTests = [
   Expect<Equal<keyof CamelUser, 'id' | 'createdAt' | 'nickname' | 'email' | 'status' | 'legacyId' | 'tags' | 'balance'>>,
@@ -236,7 +236,7 @@ export type CamelModeTests = [
   Expect<Equal<keyof SnakeDB['audit_log'], 'id' | 'user_id' | 'happened_at'>>,
   // an explicit false is the same as no options
   Expect<
-    Equal<inferKyselyDatabase<{ userTable: typeof userTable }, { camelCase: false }>, inferKyselyDatabase<{ userTable: typeof userTable }>>
+    Equal<InferKyselyDatabase<{ userTable: typeof userTable }, { camelCase: false }>, InferKyselyDatabase<{ userTable: typeof userTable }>>
   >,
 ];
 
@@ -258,9 +258,9 @@ const ledgerTable = defineTable({
   primaryKey: { columns: ['seq'] },
 });
 
-type Ledger = inferKyselyTable<typeof ledgerTable>;
-type BigLedger = inferKyselyTable<typeof ledgerTable, { bigint: true }>;
-type BigCamelDB = inferKyselyDatabase<{ ledgerTable: typeof ledgerTable }, { camelCase: true; bigint: true }>;
+type Ledger = InferKyselyTable<typeof ledgerTable>;
+type BigLedger = InferKyselyTable<typeof ledgerTable, { bigint: true }>;
+type BigCamelDB = InferKyselyDatabase<{ ledgerTable: typeof ledgerTable }, { camelCase: true; bigint: true }>;
 
 export type BigintModeTests = [
   // by default int8 is a string, like numeric: what pg and Bun.SQL return
@@ -290,16 +290,16 @@ export type BigintModeTests = [
   Expect<Equal<Selectable<BigCamelDB['ledger']>['amount'], bigint>>,
   Expect<Equal<Selectable<BigCamelDB['ledger']>['legacyId'], LegacyId | null>>,
   // an explicit false is the default
-  Expect<Equal<inferKyselyTable<typeof ledgerTable, { bigint: false }>, Ledger>>,
+  Expect<Equal<InferKyselyTable<typeof ledgerTable, { bigint: false }>, Ledger>>,
 ];
 
 // ── the boolean form of the second parameter must not compile ────────────────
 
 // @ts-expect-error the second parameter is an options object: { camelCase: true }
-export type OldCamel = inferKyselyDatabase<{ userTable: typeof userTable }, true>;
+export type OldCamel = InferKyselyDatabase<{ userTable: typeof userTable }, true>;
 
 // @ts-expect-error no such option
-export type Typo = inferKyselyDatabase<{ userTable: typeof userTable }, { camelcase: true }>;
+export type Typo = InferKyselyDatabase<{ userTable: typeof userTable }, { camelcase: true }>;
 
 // ── the old option name must not compile ─────────────────────────────────────
 
@@ -362,7 +362,7 @@ const enumSourcesTable = defineTable({
   }),
 });
 
-type EnumSources = inferKyselyTable<typeof enumSourcesTable>;
+type EnumSources = InferKyselyTable<typeof enumSourcesTable>;
 
 export type EnumSourceTests = [
   Expect<Equal<Selectable<EnumSources>['status'], 'new' | 'in-progress' | 'closed'>>,

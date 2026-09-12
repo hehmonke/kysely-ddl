@@ -10,7 +10,7 @@
  *
  * The one representation both understand is a text parameter with an explicit
  * `$1::text::jsonb` cast. That is what `jsonb()` and `jsonbArray()` build, and the
- * `Jsonb<T>` brand in the write types (`inferKyselyTable`) keeps a raw object or
+ * `Jsonb<T>` brand in the write types (`InferKyselyTable`) keeps a raw object or
  * string from being passed around the helper.
  *
  * ```ts

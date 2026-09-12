@@ -9,7 +9,7 @@ import pg from 'pg';
 
 import {
   defineTable,
-  type inferKyselyDatabase,
+  type InferKyselyDatabase,
   type Jsonb,
   jsonb,
   jsonbArray,
@@ -22,7 +22,7 @@ import { BunSqlDialect } from './helpers/bun-dialect.ts';
 import { ADMIN_URL, createTempDatabase, query, tableNames, type TempDatabase } from './helpers/database.ts';
 import { addMigration, documentTable, type Profile, schema, ticketTable, userTable } from './helpers/schema.ts';
 
-type DB = inferKyselyDatabase<typeof schema>;
+type DB = InferKyselyDatabase<typeof schema>;
 
 const describeDb = ADMIN_URL === undefined ? describe.skip : describe;
 
@@ -330,7 +330,7 @@ const auditLogTable = defineTable({
   foreignKeys: [{ columns: ['userId'], references: ref(userTable, ['id']), onDelete: 'cascade' }],
 });
 
-type CamelDB = inferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable }, { camelCase: true }>;
+type CamelDB = InferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable }, { camelCase: true }>;
 
 for (const { label, create } of dialects) {
   describeDb(`${label}: CamelCasePlugin`, () => {
@@ -393,8 +393,8 @@ const ledgerTable = defineTable({
   primaryKey: { columns: ['id'] },
 });
 
-type LedgerDB = inferKyselyDatabase<{ ledgerTable: typeof ledgerTable }>;
-type BigintLedgerDB = inferKyselyDatabase<{ ledgerTable: typeof ledgerTable }, { bigint: true }>;
+type LedgerDB = InferKyselyDatabase<{ ledgerTable: typeof ledgerTable }>;
+type BigintLedgerDB = InferKyselyDatabase<{ ledgerTable: typeof ledgerTable }, { bigint: true }>;
 
 /** 2^53 + 1: past what a number holds exactly. */
 const BIG = 9007199254740993n;
