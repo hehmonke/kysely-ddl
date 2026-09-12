@@ -4,6 +4,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-12
+
 ### Changed
 
 - **Breaking:** the `inferKyselyTable` and `inferKyselyDatabase` types are
