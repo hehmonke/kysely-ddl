@@ -1,6 +1,6 @@
 {
   "name": "kysely-ddl",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "PostgreSQL schema as TypeScript code: SQL migrations from snapshot diffs, Kysely table types and a migration runner",
   "keywords": [
     "postgres",
