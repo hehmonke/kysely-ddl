@@ -4,6 +4,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Added
+
+- `{ bigint: true }` in the infer options: `bigint()` columns as `bigint` and
+  `bigint().array()` columns as `bigint[]`, for a driver that returns int8 that
+  way (`Bun.SQL` with `{ bigint: true }`, `pg` with a type parser for oid 20 and,
+  for arrays, 1016). A column with `$type<T>()` keeps `T`. The `InferOptions`
+  type is exported.
+
+### Changed
+
+- **Breaking:** the second type parameter of `inferKyselyTable` and
+  `inferKyselyDatabase` is an options object instead of a boolean:
+  `inferKyselyDatabase<typeof schema, true>` becomes
+  `inferKyselyDatabase<typeof schema, { camelCase: true }>`.
+
 ## [0.2.0] — 2026-09-12
 
 ### Added

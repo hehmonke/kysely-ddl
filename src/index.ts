@@ -27,7 +27,7 @@ export type { GenerateResult } from './generator/generate.ts';
 export { renderChange, renderChanges, renderConcurrentStatements, renderStatements } from './generator/render.ts';
 export { buildSnapshot, EMPTY_SNAPSHOT, SNAPSHOT_VERSION } from './generator/snapshot.ts';
 export type { ColumnSnapshot, Snapshot, TableSnapshot } from './generator/snapshot.ts';
-export type { inferKyselyDatabase, inferKyselyTable } from './kysely/infer.ts';
+export type { inferKyselyDatabase, inferKyselyTable, InferOptions } from './kysely/infer.ts';
 export { jsonb, jsonbArray } from './kysely/json.ts';
 export type { Jsonb } from './kysely/json.ts';
 export {

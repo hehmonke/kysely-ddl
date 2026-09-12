@@ -5,6 +5,8 @@
  *
  * JS arrays in parameters are encoded into postgres array literals here: `Bun.SQL`
  * 1.4 does not do it through `unsafe` (it joins with commas and no braces).
+ *
+ * `{ bigint: true }` is passed on to `Bun.SQL`: int8 comes back as `bigint` instead of a string.
  */
 import { type ReservedSQL, SQL } from 'bun';
 
@@ -26,15 +28,22 @@ import {
 
 import { pgArrayLiteral } from '../../src/kysely/json.ts';
 
+export interface BunSqlDialectOptions {
+  /** `Bun.SQL`'s own option: int8 as `bigint` instead of a string. */
+  readonly bigint?: boolean;
+}
+
 export class BunSqlDialect implements Dialect {
   readonly #url: string;
+  readonly #options: BunSqlDialectOptions;
 
-  constructor(url: string) {
+  constructor(url: string, options: BunSqlDialectOptions = {}) {
     this.#url = url;
+    this.#options = options;
   }
 
   createDriver(): Driver {
-    return new BunSqlDriver(this.#url);
+    return new BunSqlDriver(this.#url, this.#options);
   }
 
   createQueryCompiler(): QueryCompiler {
@@ -52,14 +61,16 @@ export class BunSqlDialect implements Dialect {
 
 class BunSqlDriver implements Driver {
   readonly #url: string;
+  readonly #options: BunSqlDialectOptions;
   #sql: SQL | undefined;
 
-  constructor(url: string) {
+  constructor(url: string, options: BunSqlDialectOptions) {
     this.#url = url;
+    this.#options = options;
   }
 
   async init(): Promise<void> {
-    this.#sql = new SQL(this.#url);
+    this.#sql = new SQL(this.#url, { bigint: this.#options.bigint ?? false });
   }
 
   async acquireConnection(): Promise<DatabaseConnection> {

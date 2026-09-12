@@ -53,6 +53,7 @@ export type ResolveColumns<TCols extends Record<string, AnyColumn>> = {
     readonly identity: TCols[K]['_']['identity'];
     readonly enumValues: TCols[K]['_']['enumValues'];
     readonly json: TCols[K]['_']['json'];
+    readonly bigint: TCols[K]['_']['bigint'];
   };
 };
 

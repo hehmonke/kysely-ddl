@@ -45,10 +45,51 @@ afterEach(async () => {
   }
 });
 
-/** The same test set runs through both dialects, pg and Bun.SQL. */
-const dialects: { readonly label: string; readonly create: (url: string) => Dialect }[] = [
-  { label: 'PostgresDialect over pg', create: url => new PostgresDialect({ pool: new pg.Pool({ connectionString: url }) }) },
-  { label: 'BunSqlDialect over Bun.SQL', create: url => new BunSqlDialect(url) },
+/**
+ * pg parses int8 (oid 20) and int8[] (oid 1016) with separate parsers, so both get
+ * a BigInt one. Through the pool's `types` rather than `pg.types.setTypeParser`,
+ * which is global and would leak into the other tests.
+ */
+type TypeId = Parameters<typeof pg.types.getTypeParser>[0];
+const INT8_ARRAY = 1016 as TypeId; // no entry in pg.types.builtins
+const parseInt8Array = pg.types.getTypeParser(INT8_ARRAY) as (value: string) => (string | null)[];
+const int8AsBigInt: pg.CustomTypesConfig = {
+  getTypeParser: (oid: TypeId, format?: 'text' | 'binary') => {
+    if (format === 'binary') {
+      return pg.types.getTypeParser(oid, format);
+    }
+
+    if (oid === pg.types.builtins.INT8) {
+      return BigInt;
+    }
+
+    if (oid === INT8_ARRAY) {
+      return (value: string) => parseInt8Array(value).map(item => (item === null ? null : BigInt(item)));
+    }
+
+    return pg.types.getTypeParser(oid, format);
+  },
+};
+
+/**
+ * The same test set runs through both dialects, pg and Bun.SQL. `createBigint` is
+ * the same driver told to return int8 as BigInt, for the `{ bigint: true }` types.
+ */
+const dialects: {
+  readonly label: string;
+  readonly create: (url: string) => Dialect;
+  readonly createBigint: (url: string) => Dialect;
+}[] = [
+  {
+    label: 'PostgresDialect over pg',
+    create: url => new PostgresDialect({ pool: new pg.Pool({ connectionString: url }) }),
+    createBigint: url => new PostgresDialect({ pool: new pg.Pool({ connectionString: url, types: int8AsBigInt }) }),
+  },
+  {
+    label: 'BunSqlDialect over Bun.SQL',
+    create: url => new BunSqlDialect(url),
+    createBigint: url => new BunSqlDialect(url, { bigint: true }),
+  },
 ];
 
 for (const { label, create } of dialects) {
@@ -289,7 +330,7 @@ const auditLogTable = defineTable({
   foreignKeys: [{ columns: ['userId'], references: ref(userTable, ['id']), onDelete: 'cascade' }],
 });
 
-type CamelDB = inferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable }, true>;
+type CamelDB = inferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable }, { camelCase: true }>;
 
 for (const { label, create } of dialects) {
   describeDb(`${label}: CamelCasePlugin`, () => {
@@ -335,6 +376,72 @@ for (const { label, create } of dialects) {
 
       const compiled = db.selectFrom('auditLog').select(['auditLog.userId', 'auditLog.happenedAt']).compile();
       expect(compiled.sql).toBe('select "audit_log"."user_id", "audit_log"."happened_at" from "audit_log"');
+    });
+  });
+}
+
+// ── { bigint: true }: int8 as BigInt from the driver, the types follow ───────
+
+const ledgerTable = defineTable({
+  name: 'ledger',
+  columns: t => ({
+    id: t.integer().generatedAlwaysAsIdentity(),
+    amount: t.bigint().notNull(),
+    history: t.bigint().array().notNull(),
+    limit: t.bigint(),
+  }),
+  primaryKey: { columns: ['id'] },
+});
+
+type LedgerDB = inferKyselyDatabase<{ ledgerTable: typeof ledgerTable }>;
+type BigintLedgerDB = inferKyselyDatabase<{ ledgerTable: typeof ledgerTable }, { bigint: true }>;
+
+/** 2^53 + 1: past what a number holds exactly. */
+const BIG = 9007199254740993n;
+
+for (const { label, create, createBigint } of dialects) {
+  describeDb(`${label}: bigint`, () => {
+    beforeEach(() => {
+      addMigration(dir, 'init', [ledgerTable]);
+    });
+
+    test('by default int8 is a string, which is what the driver returns', async () => {
+      const db = new Kysely<LedgerDB>({ dialect: create(tempDb.url) });
+
+      try {
+        await migrateToLatest({ db, migrationsDir: dir });
+        await db.insertInto('ledger').values({ amount: String(BIG), history: ['1', String(BIG)] }).execute();
+
+        const row = await db.selectFrom('ledger').selectAll().executeTakeFirstOrThrow();
+        expect(row).toMatchObject({ amount: String(BIG), history: ['1', String(BIG)], limit: null });
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    test('with the driver returning BigInt, { bigint: true } reads and writes bigint and bigint[]', async () => {
+      const db = new Kysely<BigintLedgerDB>({ dialect: createBigint(tempDb.url) });
+
+      try {
+        await migrateToLatest({ db, migrationsDir: dir });
+        await db
+          .insertInto('ledger')
+          .values([{ amount: BIG, history: [1n, BIG] }, { amount: BIG + 1n, history: [], limit: 5n }])
+          .execute();
+
+        const rows = await db.selectFrom('ledger').selectAll().orderBy('id').execute();
+        expect(rows.map(row => row.amount)).toEqual([BIG, BIG + 1n]);
+        expect(rows.map(row => row.history)).toEqual([[1n, BIG], []]);
+        expect(rows.map(row => row.limit)).toEqual([null, 5n]);
+
+        // exact past 2^53: as numbers, BIG and BIG + 1 would be the same value
+        expect(await db.selectFrom('ledger').select('id').where('amount', '>', BIG).execute()).toHaveLength(1);
+
+        const updated = await db.updateTable('ledger').set({ amount: 1n }).where('limit', '=', 5n).executeTakeFirst();
+        expect(updated.numUpdatedRows).toBe(1n);
+      } finally {
+        await db.destroy();
+      }
     });
   });
 }

@@ -16,6 +16,9 @@
  *   int8    -> string   (no precision loss beyond 2^53)
  *   numeric -> string   (no float error)
  *
+ * The one option there is follows the driver instead of replacing it: `pg` and
+ * `Bun.SQL` can both be told to return int8 as `bigint`, and `{ bigint: true }` in
+ * the infer options (see the kysely layer) types `bigint()` columns to match.
  * For another type use `$type<T>()` plus an explicit conversion on your side.
  */
 import type { Sql } from './sql.ts';
@@ -33,6 +36,12 @@ export interface ColumnCfg {
   readonly enumValues: readonly string[] | undefined;
   /** A jsonb column: values for writes go through `jsonb()`, see the kysely layer. */
   readonly json: boolean;
+  /**
+   * An int8 column still typed as the driver's default, a string. `{ bigint: true }`
+   * in the infer options reads such a column as `bigint`; `$type<T>()` clears the
+   * flag, since an explicit type is final.
+   */
+  readonly bigint: boolean;
 }
 
 /**
@@ -49,6 +58,7 @@ type Update<T extends ColumnCfg, U extends Partial<ColumnCfg>> = {
   readonly identity: U extends { identity: infer V } ? V : T['identity'];
   readonly enumValues: U extends { enumValues: infer V } ? V : T['enumValues'];
   readonly json: U extends { json: infer V extends boolean } ? V : T['json'];
+  readonly bigint: U extends { bigint: infer V extends boolean } ? V : T['bigint'];
 };
 
 /** A default: a literal or an SQL expression. */
@@ -106,10 +116,14 @@ export class ColumnBuilder<T extends ColumnCfg = ColumnCfg> {
     return this.next<{ data: T['data'][]; array: true }>({ array: true });
   }
 
-  /** Narrows the value type without touching the column type in the database. */
+  /**
+   * Narrows the value type without touching the column type in the database. The
+   * type is final: on a `bigint()` column it also switches the `bigint: true` infer
+   * option off.
+   */
   // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- the type parameter is the whole point of the method
-  $type<U>(): ColumnBuilder<Update<T, { data: U }>> {
-    return this as unknown as ColumnBuilder<Update<T, { data: U }>>;
+  $type<U>(): ColumnBuilder<Update<T, { data: U; bigint: false }>> {
+    return this as unknown as ColumnBuilder<Update<T, { data: U; bigint: false }>>;
   }
 }
 
@@ -121,6 +135,7 @@ type Fresh<
   TData,
   TEnum extends readonly string[] | undefined = undefined,
   TJson extends boolean = false,
+  TBigint extends boolean = false,
 > = ColumnBuilder<{
   name: N;
   data: TData;
@@ -130,6 +145,7 @@ type Fresh<
   identity: undefined;
   enumValues: TEnum;
   json: TJson;
+  bigint: TBigint;
 }>;
 
 function fresh(
@@ -219,9 +235,13 @@ function integer(name?: string) {
   return fresh('integer', name);
 }
 
-/** int8. A string in JS: that is what `pg` returns, and no precision is lost. */
-function bigint<N extends string>(name: N): Fresh<N, string>;
-function bigint(): Fresh<undefined, string>;
+/**
+ * int8. A string in JS by default: that is what `pg` and `Bun.SQL` return, and no
+ * precision is lost. A driver told to return `bigint` is matched by the
+ * `bigint: true` infer option, which turns these columns into `bigint`.
+ */
+function bigint<N extends string>(name: N): Fresh<N, string, undefined, false, true>;
+function bigint(): Fresh<undefined, string, undefined, false, true>;
 function bigint(name?: string) {
   return fresh('bigint', name);
 }

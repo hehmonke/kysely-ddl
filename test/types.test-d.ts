@@ -208,7 +208,7 @@ export type CasingTests = [
   Expect<Equal<CamelCase<'id'>, 'id'>>,
 ];
 
-// ── camelCase type mode: second parameter true ───────────────────────────────
+// ── options: { camelCase: true }, like CamelCasePlugin ───────────────────────
 
 const auditLogTable = defineTable({
   name: 'audit_log',
@@ -220,8 +220,11 @@ const auditLogTable = defineTable({
   primaryKey: { columns: ['id'] },
 });
 
-type CamelUser = inferKyselyTable<typeof userTable, true>;
-type CamelDB = inferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable; other: 1 }, true>;
+type CamelUser = inferKyselyTable<typeof userTable, { camelCase: true }>;
+type CamelDB = inferKyselyDatabase<
+  { userTable: typeof userTable; auditLogTable: typeof auditLogTable; other: 1 },
+  { camelCase: true }
+>;
 type SnakeDB = inferKyselyDatabase<{ userTable: typeof userTable; auditLogTable: typeof auditLogTable }>;
 
 export type CamelModeTests = [
@@ -232,9 +235,72 @@ export type CamelModeTests = [
   Expect<Equal<keyof CamelDB['auditLog'], 'id' | 'userId' | 'happenedAt'>>,
   Expect<Equal<keyof SnakeDB, 'user' | 'audit_log'>>,
   Expect<Equal<keyof SnakeDB['audit_log'], 'id' | 'user_id' | 'happened_at'>>,
-  // an explicit false is the same as no parameter
-  Expect<Equal<inferKyselyDatabase<{ userTable: typeof userTable }, false>, inferKyselyDatabase<{ userTable: typeof userTable }>>>,
+  // an explicit false is the same as no options
+  Expect<
+    Equal<inferKyselyDatabase<{ userTable: typeof userTable }, { camelCase: false }>, inferKyselyDatabase<{ userTable: typeof userTable }>>
+  >,
 ];
+
+// ── options: { bigint: true }, for a driver that returns int8 as BigInt ──────
+
+type LegacyId = string & { readonly __brand: 'legacy' };
+
+const ledgerTable = defineTable({
+  name: 'ledger',
+  columns: t => ({
+    seq: t.bigint().generatedAlwaysAsIdentity(),
+    amount: t.bigint().notNull(),
+    limit: t.bigint(),
+    history: t.bigint().array().notNull(),
+    legacyId: t.bigint().$type<LegacyId>(),
+    total: t.numeric().notNull(),
+    code: t.varchar().notNull(),
+  }),
+  primaryKey: { columns: ['seq'] },
+});
+
+type Ledger = inferKyselyTable<typeof ledgerTable>;
+type BigLedger = inferKyselyTable<typeof ledgerTable, { bigint: true }>;
+type BigCamelDB = inferKyselyDatabase<{ ledgerTable: typeof ledgerTable }, { camelCase: true; bigint: true }>;
+
+export type BigintModeTests = [
+  // by default int8 is a string, like numeric: what pg and Bun.SQL return
+  Expect<
+    Equal<
+      Simplify<Selectable<Ledger>>,
+      { seq: string; amount: string; limit: string | null; history: string[]; legacy_id: LegacyId | null; total: string; code: string }
+    >
+  >,
+  // with the option every bigint() column reads and writes as bigint, arrays as bigint[];
+  // $type<T>() keeps T, numeric stays a string
+  Expect<
+    Equal<
+      Simplify<Selectable<BigLedger>>,
+      { seq: bigint; amount: bigint; limit: bigint | null; history: bigint[]; legacy_id: LegacyId | null; total: string; code: string }
+    >
+  >,
+  Expect<
+    Equal<
+      Simplify<Insertable<BigLedger>>,
+      { amount: bigint; limit?: bigint | null; history: bigint[]; legacy_id?: LegacyId | null; total: string; code: string }
+    >
+  >,
+  // the options combine
+  Expect<Equal<keyof BigCamelDB, 'ledger'>>,
+  Expect<Equal<keyof BigCamelDB['ledger'], 'seq' | 'amount' | 'limit' | 'history' | 'legacyId' | 'total' | 'code'>>,
+  Expect<Equal<Selectable<BigCamelDB['ledger']>['amount'], bigint>>,
+  Expect<Equal<Selectable<BigCamelDB['ledger']>['legacyId'], LegacyId | null>>,
+  // an explicit false is the default
+  Expect<Equal<inferKyselyTable<typeof ledgerTable, { bigint: false }>, Ledger>>,
+];
+
+// ── the boolean form of the second parameter must not compile ────────────────
+
+// @ts-expect-error the second parameter is an options object: { camelCase: true }
+export type OldCamel = inferKyselyDatabase<{ userTable: typeof userTable }, true>;
+
+// @ts-expect-error no such option
+export type Typo = inferKyselyDatabase<{ userTable: typeof userTable }, { camelcase: true }>;
 
 // ── the old option name must not compile ─────────────────────────────────────
 

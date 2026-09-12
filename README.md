@@ -134,8 +134,9 @@ config second: `t.varchar('title', { length: 200 })`.
 
 TypeScript value types match what the driver returns, without modes like
 `bigint({ mode })`: `bigint` and `numeric` are strings (no precision loss),
-`timestamp` is `Date`, `jsonb` is `unknown`. For another type use `$type<T>()`
-and convert on your side.
+`timestamp` is `Date`, `jsonb` is `unknown`. A driver told to return int8 as
+`bigint` is matched by the `bigint: true` infer option, see "Types for Kysely".
+For another type use `$type<T>()` and convert on your side.
 
 ### `enum([...])`
 
@@ -206,9 +207,10 @@ type NewUser = Insertable<UserTable>;
 ```
 
 Keys are **the column names in the database**: they are known at the type level
-because `defineTable` keeps them as literals. With Kysely's `CamelCasePlugin`
-pass `true` as the second parameter and the column and table keys become
-camelCase, see below. Write rules:
+because `defineTable` keeps them as literals. The second parameter of both types
+is an options object, `InferOptions`: `{ camelCase: true }` for Kysely's
+`CamelCasePlugin`, `{ bigint: true }` for a driver that returns int8 as `bigint`;
+both are described below, and they combine. Write rules:
 
 | column | `Insertable` |
 |---|---|
@@ -221,13 +223,13 @@ camelCase, see below. Write rules:
 ### CamelCasePlugin
 
 `CamelCasePlugin` rewrites camelCase in code to snake_case in SQL and back in
-result row keys. To have the types reflect that, both `infer` types take `true`
-as the second parameter:
+result row keys. To have the types reflect that, pass `{ camelCase: true }` to
+either `infer` type:
 
 ```ts
 import { CamelCasePlugin, Kysely } from 'kysely';
 
-type DB = inferKyselyDatabase<typeof schema, true>;
+type DB = inferKyselyDatabase<typeof schema, { camelCase: true }>;
 const db = new Kysely<DB>({ dialect, plugins: [new CamelCasePlugin()] });
 
 await db.selectFrom('auditLog').select(['userId', 'happenedAt']).execute();
@@ -245,6 +247,35 @@ leading underscore. Plugin options (`upperCase`, `underscoreBeforeDigits`,
 `underscoreBetweenUppercaseLetters`) are not supported by the types. The
 conversions themselves are exported too: the types `SnakeCase`, `CamelCase` and
 the functions `toSnakeCase`, `toCamelCase`.
+
+### bigint: when the driver returns `bigint`
+
+`bigint()` columns are strings in the types because that is what `pg` and
+`Bun.SQL` return for int8 by default. Both can return `bigint` instead, and then
+the types follow with `{ bigint: true }`: `bigint()` columns read and write as
+`bigint`, `bigint().array()` columns as `bigint[]`, nullable ones as
+`bigint | null`. A column with `$type<T>()` stays `T`, and `numeric` stays a
+string either way.
+
+```ts
+// Bun.SQL: its own option
+const sql = new SQL(process.env.DATABASE_URL, { bigint: true });
+
+// pg: a parser for int8 (oid 20); int8[] (oid 1016) is parsed separately and has no entry in pg.types.builtins
+pg.types.setTypeParser(pg.types.builtins.INT8, BigInt);
+const INT8_ARRAY = 1016 as Parameters<typeof pg.types.getTypeParser>[0];
+const parseInt8Array = pg.types.getTypeParser(INT8_ARRAY) as (value: string) => (string | null)[];
+pg.types.setTypeParser(INT8_ARRAY, value => parseInt8Array(value).map(item => (item === null ? null : BigInt(item))));
+
+type DB = inferKyselyDatabase<typeof schema, { bigint: true }>;
+// together with CamelCasePlugin: { camelCase: true, bigint: true }
+
+const row = await db.selectFrom('ledger').select(['amount', 'history']).executeTakeFirstOrThrow();
+//    ^? { amount: bigint; history: bigint[] }
+```
+
+Values past 2^53 stay exact on both drivers, in parameters as well as in
+results, which is the point of `bigint` over `number`.
 
 ### jsonb: values through `jsonb()` and `jsonbArray()`
 
@@ -465,6 +496,7 @@ What the checks showed on `pg` 8.23 and `Bun.SQL` 1.4 (parameters via Kysely):
 | array of objects -> `jsonb[]` | ok | error: arrays are not encoded | `jsonbArray([...])` |
 | array of strings -> `varchar[]` | ok, including commas, quotes, `null` | error: elements joined with commas | a Bun dialect must encode arrays into literals itself, as the test one does |
 | `numeric` = 0 on read | `'0.00'` | `'0'` | compare as numbers |
+| `int8` on read | `'42'`; `42n` with a parser for oid 20, and 1016 for `int8[]` | `'42'`; `42n` with `{ bigint: true }` | the `bigint: true` infer option once the driver returns `bigint` |
 
 Reading jsonb, JSON arrays, `jsonb[]` and `varchar[]` yields parsed JS values
 with both drivers.
