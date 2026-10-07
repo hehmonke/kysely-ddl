@@ -70,13 +70,32 @@ describe('buildSnapshot', () => {
   test('a table declared twice is an error', () => {
     expect(() => buildSnapshot([userTable, userTable])).toThrow(/declared twice/);
   });
+
+  test('tables are ordered by name, whatever order they come in', () => {
+    const tables = ['game_translation', 'game', 'Game', 'game_association', 'a1'].map(name =>
+      defineTable({ name, columns: t => ({ id: t.integer() }) }),
+    );
+    const forward = buildSnapshot(tables).tables.map(table => table.name);
+    const backward = buildSnapshot(tables.toReversed()).tables.map(table => table.name);
+
+    // Code unit order, not a locale's: `localeCompare` places `_` and case differently from machine to machine.
+    expect(forward).toEqual(['Game', 'a1', 'game', 'game_association', 'game_translation']);
+    expect(backward).toEqual(forward);
+  });
 });
 
 describe('generateMigration: from scratch', () => {
   const result = generateMigration([userTable, sessionTable]);
 
   test('CREATE TABLE with pk/check inside, indexes and fks as separate statements at the end', () => {
-    expect(result.sql).toBe(`CREATE TABLE "user" (
+    expect(result.sql).toBe(`CREATE TABLE "session" (
+\t"id" uuid DEFAULT gen_random_uuid() NOT NULL,
+\t"user_id" uuid NOT NULL,
+\t"seq" integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+\tCONSTRAINT "session_pk" PRIMARY KEY("id")
+);
+
+CREATE TABLE "user" (
 \t"id" uuid DEFAULT gen_random_uuid() NOT NULL,
 \t"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 \t"nickname" varchar NOT NULL,
@@ -87,13 +106,6 @@ describe('generateMigration: from scratch', () => {
 \tCONSTRAINT "user_nickname_check" CHECK (char_length("nickname") >= 2)
 );
 
-CREATE TABLE "session" (
-\t"id" uuid DEFAULT gen_random_uuid() NOT NULL,
-\t"user_id" uuid NOT NULL,
-\t"seq" integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-\tCONSTRAINT "session_pk" PRIMARY KEY("id")
-);
-
 CREATE UNIQUE INDEX "user_nickname_idx" ON "user" ("nickname");
 ALTER TABLE "session" ADD CONSTRAINT "session_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "user"("id") ON DELETE CASCADE;
 `);
@@ -101,7 +113,8 @@ ALTER TABLE "session" ADD CONSTRAINT "session_user_id_fk" FOREIGN KEY ("user_id"
 
   test('statements are the same SQL one by one', () => {
     expect(result.statements).toHaveLength(4);
-    expect(result.statements[0]).toStartWith('CREATE TABLE "user"');
+    expect(result.statements[0]).toStartWith('CREATE TABLE "session"');
+    expect(result.statements[1]).toStartWith('CREATE TABLE "user"');
     expect(result.statements[2]).toBe('CREATE UNIQUE INDEX "user_nickname_idx" ON "user" ("nickname");');
     expect(result.statements[3]).toStartWith('ALTER TABLE "session" ADD CONSTRAINT "session_user_id_fk"');
   });

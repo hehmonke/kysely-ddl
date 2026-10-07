@@ -104,7 +104,15 @@ function tableSnapshot(spec: TableSpec): TableSnapshot {
   };
 }
 
-/** Schema (a list of tables) -> snapshot. */
+/**
+ * Schema (a list of tables) -> snapshot.
+ *
+ * Tables are ordered by name, so the snapshot and the CREATE TABLE order of a
+ * migration do not depend on how the caller collected the list: a hand-written
+ * array, a module's exports and `loadTables` give the same file. The comparison
+ * is by UTF-16 code unit, not `localeCompare`, whose order changes with the
+ * machine's locale.
+ */
 export function buildSnapshot(tables: readonly AnyTable[]): Snapshot {
   const seen = new Set<string>();
 
@@ -115,5 +123,16 @@ export function buildSnapshot(tables: readonly AnyTable[]): Snapshot {
     seen.add(table.spec.name);
   }
 
-  return { version: SNAPSHOT_VERSION, tables: tables.map(t => tableSnapshot(t.spec)) };
+  return {
+    version: SNAPSHOT_VERSION,
+    tables: tables.map(t => tableSnapshot(t.spec)).toSorted((a, b) => compareNames(a.name, b.name)),
+  };
+}
+
+function compareNames(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+
+  return a < b ? -1 : 1;
 }

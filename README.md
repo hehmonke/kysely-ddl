@@ -470,6 +470,11 @@ DROP INDEX -> DROP CONSTRAINT -> CREATE TABLE -> ADD COLUMN -> ALTER COLUMN
   -> DROP COLUMN -> DROP TABLE
 ```
 
+Within a step, tables go by name, compared by code unit rather than by locale;
+`snapshot.json` lists them in the same order. A hand-written list, a module's
+exports and `loadTables` therefore produce the same migration and the same
+snapshot on every machine.
+
 `PRIMARY KEY`, `UNIQUE` and `CHECK` of a new table go inside `CREATE TABLE`.
 Replacing a constraint is a single `ALTER TABLE ... DROP CONSTRAINT ..., ADD CONSTRAINT ...`.
 `DROP COLUMN` and `DROP TABLE` are printed as is, so review a migration before

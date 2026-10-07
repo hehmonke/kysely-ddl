@@ -4,6 +4,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Changed
+
+- `buildSnapshot`, and through it `generateMigration`, orders tables by name,
+  comparing code units rather than going by the locale. The snapshot and the
+  order of the statements within a step used to follow the order the tables were
+  passed in, so switching from a hand-written list or a module's exports to
+  `loadTables` rewrote `snapshot.json` without a single schema change. The
+  first generation after the upgrade reorders an existing snapshot once; the
+  diff matches tables by name, so no SQL comes of it.
+
 ## [0.7.0] — 2026-09-12
 
 ### Added
