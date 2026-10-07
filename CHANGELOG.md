@@ -4,6 +4,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-07
+
 ### Changed
 
 - `buildSnapshot`, and through it `generateMigration`, orders tables by name,
