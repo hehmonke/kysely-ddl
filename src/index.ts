@@ -55,7 +55,9 @@ export type { ColumnBuilders } from './table/column-types/index.ts';
 export { IntegerColumnBuilder } from './table/column-types/integer.ts';
 export { TimestampColumnBuilder } from './table/column-types/timestamp.ts';
 export { ColumnBuilder } from './table/columns.ts';
-export type { AnyColumn, ColumnCfg, ColumnKind, ColumnSpec, DefaultValue } from './table/columns.ts';
+// BuilderFor, Fresh and Update are in the inferred type of every column helper and
+// table, so a project that emits declarations has to be able to name them
+export type { AnyColumn, BuilderFor, ColumnCfg, ColumnKind, ColumnSpec, DefaultValue, Fresh, Update } from './table/columns.ts';
 export { AUTO_NAMES, defineTable, isTable, ref } from './table/define.ts';
 export type {
   AnyTable,

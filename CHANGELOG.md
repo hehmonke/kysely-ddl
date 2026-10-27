@@ -4,6 +4,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Fixed
+
+- The types `BuilderFor`, `Fresh` and `Update` are exported. They are part of
+  the inferred type of every column helper and table, so a project that emits
+  declarations (`declaration: true`, any composite project) failed with "the
+  inferred type cannot be named without a reference to kysely-ddl/dist/..."
+  (TS2742, TS2883 in TypeScript 7) on each exported table and helper.
+
 ## [0.9.0] — 2026-10-27
 
 ### Added
