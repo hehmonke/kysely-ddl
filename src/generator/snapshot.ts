@@ -9,7 +9,17 @@
  * detection is a separate tool's job.
  */
 import type { DefaultValue } from '../table/columns.ts';
-import type { AnyTable, IndexKey, IndexMethod, ReferentialAction, TableSpec } from '../table/define.ts';
+import {
+  type AnyTable,
+  type ForeignKey,
+  type IndexKey,
+  type IndexMethod,
+  isForeignKey,
+  type ReferentialAction,
+  type SchemaObject,
+  type TableSpec,
+  withForeignKeys,
+} from '../table/define.ts';
 import { isSql, quoteLiteral, renderSql } from '../table/sql.ts';
 
 export const SNAPSHOT_VERSION = 1;
@@ -147,27 +157,66 @@ function tableSnapshot(spec: TableSpec): TableSnapshot {
 }
 
 /**
- * Schema (a list of tables) -> snapshot.
+ * Schema (tables and the foreign keys declared outside them) -> snapshot.
  *
  * Tables are ordered by name, so the snapshot and the CREATE TABLE order of a
  * migration do not depend on how the caller collected the list: a hand-written
  * array, a module's exports and `loadTables` give the same file. The comparison
  * is by UTF-16 code unit, not `localeCompare`, whose order changes with the
- * machine's locale.
+ * machine's locale. A key from `defineForeignKey` goes into its table after the
+ * table's own keys, ordered by name for the same reason.
  */
-export function buildSnapshot(tables: readonly AnyTable[]): Snapshot {
-  const seen = new Set<string>();
+export function buildSnapshot(schema: readonly SchemaObject[]): Snapshot {
+  const tables = new Map<string, AnyTable>();
+  const outside = new Map<string, ForeignKey[]>();
 
-  for (const table of tables) {
-    if (seen.has(table.spec.name)) {
-      throw new Error(`table "${table.spec.name}" is declared twice`);
+  for (const entry of schema) {
+    if (isForeignKey(entry)) {
+      continue;
     }
-    seen.add(table.spec.name);
+
+    if (tables.has(entry.spec.name)) {
+      throw new Error(`table "${entry.spec.name}" is declared twice`);
+    }
+    tables.set(entry.spec.name, entry);
   }
+
+  for (const entry of schema) {
+    if (!isForeignKey(entry)) {
+      continue;
+    }
+
+    const name = entry.table.spec.name;
+    const table = tables.get(name);
+
+    if (table === undefined) {
+      throw new Error(`foreign key "${entry.spec.name}" belongs to table "${name}", which is not among the tables passed`);
+    }
+
+    // the same object, not just the name: the key was resolved against its columns
+    if (table !== entry.table) {
+      throw new Error(
+        `foreign key "${entry.spec.name}" belongs to another definition of table "${name}" than the one passed`,
+      );
+    }
+
+    const keys = outside.get(name) ?? [];
+
+    if (keys.includes(entry)) {
+      throw new Error(`foreign key "${entry.spec.name}" is passed twice`);
+    }
+    outside.set(name, [...keys, entry]);
+  }
+
+  const withOutside = (table: AnyTable): TableSpec =>
+    withForeignKeys(
+      table.spec,
+      (outside.get(table.spec.name) ?? []).map(key => key.spec).toSorted((a, b) => compareNames(a.name, b.name)),
+    );
 
   return {
     version: SNAPSHOT_VERSION,
-    tables: tables.map(t => tableSnapshot(t.spec)).toSorted((a, b) => compareNames(a.name, b.name)),
+    tables: [...tables.values()].map(t => tableSnapshot(withOutside(t))).toSorted((a, b) => compareNames(a.name, b.name)),
   };
 }
 

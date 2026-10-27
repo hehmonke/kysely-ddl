@@ -215,6 +215,85 @@ describe('loadTables', () => {
     );
   });
 
+  describe('foreign keys from defineForeignKey', () => {
+    /** Two tables with keys on each other: `a` imports `b`, the key of `b` lives in a file of its own. */
+    const cycle = () => {
+      write(
+        'src/b.table.ts',
+        `import { defineTable } from ${SRC};\n` +
+          "export const bTable = defineTable({ name: 'b', columns: t => ({ id: t.int().notNull(), aId: t.int() }), " +
+          "primaryKey: { columns: ['id'] } });\n",
+      );
+      write(
+        'src/a.table.ts',
+        `import { defineTable, ref } from ${SRC};\n` +
+          "import { bTable } from './b.table.ts';\n" +
+          "export const aTable = defineTable({ name: 'a', columns: t => ({ id: t.int().notNull(), bId: t.int() }), " +
+          "primaryKey: { columns: ['id'] }, foreignKeys: [{ columns: ['bId'], references: ref(bTable, ['id']) }] });\n",
+      );
+      write(
+        'src/b-a.fk.ts',
+        `import { defineForeignKey, ref } from ${SRC};\n` +
+          "import { aTable } from './a.table.ts';\n" +
+          "import { bTable } from './b.table.ts';\n" +
+          "export const bAFk = defineForeignKey(bTable, { columns: ['aId'], references: ref(aTable, ['id']) });\n",
+      );
+    };
+
+    test('are collected after the tables, and generateMigration takes the list as is', async () => {
+      cycle();
+      const { generateMigration } = await import('../src/index.ts');
+
+      const schema = await loadTables('src/*.ts', { cwd: dir });
+
+      expect(schema.map(entry => entry.spec.name)).toEqual(['a', 'b', 'b_a_id_fk']);
+      expect(generateMigration(schema).statements.slice(2)).toEqual([
+        'ALTER TABLE "a" ADD CONSTRAINT "a_b_id_fk" FOREIGN KEY ("b_id") REFERENCES "b"("id");',
+        'ALTER TABLE "b" ADD CONSTRAINT "b_a_id_fk" FOREIGN KEY ("a_id") REFERENCES "a"("id");',
+      ]);
+    });
+
+    test('a key re-exported from a barrel is counted once', async () => {
+      cycle();
+      write('src/index.ts', "export * from './b-a.fk.ts';\n");
+
+      expect(await names('src/*.ts')).toEqual(['a', 'b', 'b_a_id_fk']);
+    });
+
+    /** `c` with a key on `a` in a file of its own, and no keys inside either table. */
+    const outside = () => {
+      cycle();
+      write(
+        'src/c.table.ts',
+        `import { defineTable } from ${SRC};\n` +
+          "export const cTable = defineTable({ name: 'c', columns: t => ({ id: t.int().notNull(), aId: t.int() }) });\n",
+      );
+      write(
+        'src/c-a.fk.ts',
+        `import { defineForeignKey, ref } from ${SRC};\n` +
+          "import { aTable } from './a.table.ts';\n" +
+          "import { cTable } from './c.table.ts';\n" +
+          "export const cAFk = defineForeignKey(cTable, { columns: ['aId'], references: ref(aTable, ['id']) });\n",
+      );
+    };
+
+    test('a key whose table is outside the match is an error', async () => {
+      outside();
+
+      await expect(loadTables(['src/a.table.ts', 'src/b.table.ts', 'src/c-a.fk.ts'], { cwd: dir })).rejects.toThrow(
+        /foreign key "c_a_id_fk" \(.*c-a\.fk\.ts\) belongs to table "c", which none of the matched files exports/,
+      );
+    });
+
+    test('a key that references a table outside the match is an error', async () => {
+      outside();
+
+      await expect(loadTables(['src/c.table.ts', 'src/c-a.fk.ts'], { cwd: dir })).rejects.toThrow(
+        /foreign key "c_a_id_fk" \(.*c-a\.fk\.ts\) references "a", which none of the matched files exports/,
+      );
+    });
+  });
+
   test('a file that fails to import is reported with its path', async () => {
     write('src/broken.table.ts', 'export const x = (;\n');
 

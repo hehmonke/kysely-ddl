@@ -3,7 +3,7 @@
  *
  * How to write it to disk and how to apply it is not this function's concern.
  */
-import type { AnyTable } from '../table/define.ts';
+import type { SchemaObject } from '../table/define.ts';
 
 import { type Change, diffSnapshots } from './diff.ts';
 import { renderChanges, renderConcurrentStatements, renderStatements } from './render.ts';
@@ -26,11 +26,12 @@ export interface GenerateResult {
   readonly changes: readonly Change[];
 }
 
+/** Takes tables and the foreign keys `defineForeignKey` declares outside them, in one list. */
 export function generateMigration(
-  tables: readonly AnyTable[],
+  schema: readonly SchemaObject[],
   previous: Snapshot = EMPTY_SNAPSHOT,
 ): GenerateResult {
-  const snapshot = buildSnapshot(tables);
+  const snapshot = buildSnapshot(schema);
   const changes = diffSnapshots(previous, snapshot);
 
   return {

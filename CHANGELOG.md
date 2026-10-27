@@ -4,6 +4,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Added
+
+- `defineForeignKey(table, { columns, references, name?, onDelete?, onUpdate? })`:
+  a foreign key declared outside `defineTable`, for two tables with keys on each
+  other, whose modules cannot import each other. Column names are checked on both
+  sides, as in `foreignKeys`. `generateMigration` and `buildSnapshot` take such
+  keys in the same list as the tables and merge each into its table: the same
+  snapshot, SQL, auto-name and name checks as a key inside `defineTable`, so
+  moving a key between the two under the same name is not a change. A key whose
+  table is not in the list is an error. `isForeignKey` recognizes them by a
+  `Symbol.for` brand, as `isTable` does tables.
+- `loadTables` collects exported `defineForeignKey` keys too, after the tables,
+  and fails when a key's table or its target is not exported by the matched
+  files. Its return type is `SchemaObject[]` (`AnyTable | ForeignKey`), which
+  `generateMigration` takes as is; with no such keys the array is the same as before.
+- `ref` and `defineForeignKey` fail with a message naming the likely import cycle
+  when given `undefined` instead of a table, rather than "cannot read properties
+  of undefined".
+
 ## [0.9.1] — 2026-10-27
 
 ### Fixed
