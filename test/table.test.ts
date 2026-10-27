@@ -55,6 +55,30 @@ describe('defineTable: columns', () => {
     expect(byKey.status?.sqlType).toBe('varchar');
   });
 
+  test('numeric with no parameters, a precision alone, and both; boolean', () => {
+    const table = defineTable({
+      name: 'amounts',
+      columns: t => ({
+        bare: t.numeric(),
+        precise: t.numeric({ precision: 20 }),
+        scaled: t.numeric('scaled', { precision: 10, scale: 2 }),
+        named: t.numeric('named', { precision: 5 }),
+        active: t.boolean().notNull().default(false),
+        flag: t.boolean('is_flag'),
+      }),
+    });
+
+    expect(table.spec.columns.map(c => [c.name, c.sqlType])).toEqual([
+      ['bare', 'numeric'],
+      ['precise', 'numeric(20)'],
+      ['scaled', 'numeric(10, 2)'],
+      ['named', 'numeric(5)'],
+      ['active', 'boolean'],
+      ['is_flag', 'boolean'],
+    ]);
+    expect(table.spec.columns.find(c => c.key === 'active')).toMatchObject({ kind: 'boolean', default: false, notNull: true });
+  });
+
   test('enum() turns into a check on the values', () => {
     const check = userTable.spec.checks.find(c => c.name === 'user_status_check');
     expect(check).toBeDefined();
