@@ -61,8 +61,12 @@ export type ResolveColumns<TCols extends Record<string, AnyColumn>> = {
 
 export type ReferentialAction = 'cascade' | 'restrict' | 'no action' | 'set null' | 'set default';
 
-/** Index access methods. `btree` is what postgres builds when none is given. */
-export type IndexMethod = 'btree' | 'hash' | 'gist' | 'spgist' | 'gin' | 'brin';
+/**
+ * Index access methods: the ones built into postgres, `btree` being what it builds
+ * when none is given, or any other name, for a method an extension installs
+ * (`bloom`, pgvector's `hnsw` and `ivfflat`).
+ */
+export type IndexMethod = 'btree' | 'hash' | 'gist' | 'spgist' | 'gin' | 'brin' | (string & {});
 
 /** Options of one index key. `order` and `nulls` are btree only: the other methods do not sort. */
 export interface IndexKeyOptions {
@@ -226,7 +230,10 @@ export interface TableOptions<
      */
     readonly name?: string;
     readonly unique?: boolean;
-    /** The access method; btree when not set. `unique`, `order` and `nulls` need btree. */
+    /**
+     * The access method; btree when not set. Among the built-in ones `unique`,
+     * `order` and `nulls` need btree, and hash and spgist take one key.
+     */
     readonly using?: IndexMethod;
     readonly columns: readonly IndexColumn<TCols>[];
     readonly where?: (c: Refs<TCols>) => Sql;
@@ -250,8 +257,16 @@ export interface TableOptions<
 /** An operator class, optionally schema-qualified. It is written into the DDL unquoted. */
 const OPCLASS = /^[a-z_][a-z0-9_$]*(\.[a-z_][a-z0-9_$]*)?$/i;
 
-/** `using` is written into the DDL unquoted too, so a value from untyped code is checked. */
-const INDEX_METHODS: ReadonlySet<string> = new Set<IndexMethod>(['btree', 'hash', 'gist', 'spgist', 'gin', 'brin']);
+/** An access method name. `using` is written into the DDL unquoted too. */
+const METHOD = /^[a-z_][a-z0-9_$]*$/i;
+
+/**
+ * What the built-in methods other than btree cannot do, from the postgres docs:
+ * only btree is unique and sorts, and only btree, gist, gin and brin take more
+ * than one key. A method an extension installs is left to postgres to judge.
+ */
+const BUILTIN_NOT_BTREE: ReadonlySet<string> = new Set(['hash', 'gist', 'spgist', 'gin', 'brin']);
+const SINGLE_KEY_METHODS: ReadonlySet<string> = new Set(['hash', 'spgist']);
 
 /**
  * A fragment that cannot be rendered is a mistake in the schema. It is caught
@@ -364,8 +379,8 @@ export function defineTable<TName extends string, TCols extends Record<string, A
       throw new Error(`${name}: ${index.name === undefined ? 'an index' : `index ${index.name}`} has no columns`);
     }
 
-    if (index.using !== undefined && !INDEX_METHODS.has(index.using)) {
-      throw new Error(`${name}: "${index.using}" is not an index method`);
+    if (index.using !== undefined && !METHOD.test(index.using)) {
+      throw new Error(`${name}: "${index.using}" is not an index method name`);
     }
 
     const keys = index.columns.map(resolveKey);
@@ -403,13 +418,17 @@ export function defineTable<TName extends string, TCols extends Record<string, A
 
     const using = index.using;
 
-    if (using !== undefined && using !== 'btree') {
+    if (using !== undefined && BUILTIN_NOT_BTREE.has(using)) {
       if (index.unique === true) {
         throw new Error(`${name}: index ${indexName}: only btree indexes can be unique, not ${using}`);
       }
 
       if (keys.some(key => key.order !== undefined || key.nulls !== undefined)) {
         throw new Error(`${name}: index ${indexName}: \`order\` and \`nulls\` need btree, ${using} does not sort`);
+      }
+
+      if (SINGLE_KEY_METHODS.has(using) && keys.length > 1) {
+        throw new Error(`${name}: index ${indexName}: ${using} indexes take one key, not ${keys.length}`);
       }
     }
 

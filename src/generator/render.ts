@@ -147,11 +147,17 @@ function alterColumn(table: string, from: ColumnSnapshot, to: ColumnSnapshot): s
   }
 
   if (from.identity !== to.identity) {
-    out.push(
-      to.identity === null
-        ? `${head} DROP IDENTITY;`
-        : `${head} ADD GENERATED ${to.identity === 'always' ? 'ALWAYS' : 'BY DEFAULT'} AS IDENTITY;`,
-    );
+    const generated = to.identity === 'always' ? 'ALWAYS' : 'BY DEFAULT';
+
+    // ADD GENERATED on a column that already is an identity is an error in postgres:
+    // switching between ALWAYS and BY DEFAULT is SET GENERATED
+    if (to.identity === null) {
+      out.push(`${head} DROP IDENTITY;`);
+    } else if (from.identity === null) {
+      out.push(`${head} ADD GENERATED ${generated} AS IDENTITY;`);
+    } else {
+      out.push(`${head} SET GENERATED ${generated};`);
+    }
   }
 
   return out;

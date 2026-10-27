@@ -225,11 +225,37 @@ describe('index keys: defineTable checks', () => {
     );
   });
 
-  test('a method from untyped code is checked: it is written unquoted', () => {
-    const using = 'gin; drop table t' as 'gin';
-    expect(() => defineTable({ name: 't', columns, indexes: [{ using, columns: ['tags'] }] })).toThrow(
-      /is not an index method/,
+  test('a method must be a name: it is written unquoted', () => {
+    expect(() => defineTable({ name: 't', columns, indexes: [{ using: 'gin; drop table t', columns: ['tags'] }] })).toThrow(
+      /is not an index method name/,
     );
+  });
+
+  test('a method an extension installs is accepted and left to postgres to judge', () => {
+    const table = defineTable({
+      name: 'doc',
+      columns: t => ({ embedding: t.varchar().notNull(), a: t.int(), b: t.int() }),
+      indexes: [
+        { using: 'hnsw', columns: [{ column: 'embedding', opclass: 'vector_cosine_ops' }] },
+        { using: 'bloom', columns: ['a', 'b'] },
+      ],
+    });
+
+    expect(generateMigration([table]).statements.slice(1)).toEqual([
+      'CREATE INDEX "doc_embedding_idx" ON "doc" USING hnsw ("embedding" vector_cosine_ops);',
+      'CREATE INDEX "doc_a_b_idx" ON "doc" USING bloom ("a","b");',
+    ]);
+  });
+
+  test('hash and spgist take one key; gist, gin and brin take several', () => {
+    const two = (using: 'hash' | 'spgist' | 'gist' | 'gin' | 'brin') =>
+      defineTable({ name: 't', columns, indexes: [{ using, columns: ['a', 'tags'] }] });
+
+    expect(() => two('hash')).toThrow(/t: index t_a_tags_idx: hash indexes take one key, not 2/);
+    expect(() => two('spgist')).toThrow(/spgist indexes take one key, not 2/);
+    expect(() => two('gist')).not.toThrow();
+    expect(() => two('gin')).not.toThrow();
+    expect(() => two('brin')).not.toThrow();
   });
 
   test('plain columns name the index as before, repeats included; an expression adds only new columns', () => {
@@ -303,6 +329,7 @@ describeDb('index keys and new column types: postgres accepts the SQL', () => {
         kind: t.smallint().notNull(),
         label: t.text().notNull(),
         ratio: t.doublePrecision().notNull().default(0.5),
+        seq: t.smallint().generatedAlwaysAsIdentity(),
       }),
       primaryKey: { columns: ['id'] },
     });
@@ -319,6 +346,7 @@ describeDb('index keys and new column types: postgres accepts the SQL', () => {
       { column_name: 'kind', data_type: 'smallint', identity_generation: null },
       { column_name: 'label', data_type: 'text', identity_generation: null },
       { column_name: 'ratio', data_type: 'double precision', identity_generation: null },
+      { column_name: 'seq', data_type: 'smallint', identity_generation: 'ALWAYS' },
     ]);
 
     // a fixed id, as a seed writes it, and a generated one next to it
@@ -333,5 +361,21 @@ describeDb('index keys and new column types: postgres accepts the SQL', () => {
       { id: 100, kind: 1, ratio: 0.5 },
       { id: 1, kind: 2, ratio: 0.5 },
     ]);
+  });
+
+  test('an identity switched between ALWAYS and BY DEFAULT, on a live table', async () => {
+    const always = defineTable({ name: 'seq', columns: t => ({ id: t.int().generatedAlwaysAsIdentity(), label: t.text() }) });
+    const byDefault = defineTable({ name: 'seq', columns: t => ({ id: t.int().generatedByDefaultAsIdentity(), label: t.text() }) });
+    const created = generateMigration([always]);
+
+    await query(tempDb.url, created.sql);
+    await expect(query(tempDb.url, `insert into seq (id, label) values (5, 'fixed')`)).rejects.toThrow(/non-DEFAULT value/);
+
+    const relaxed = generateMigration([byDefault], created.snapshot);
+    await query(tempDb.url, relaxed.sql);
+    await query(tempDb.url, `insert into seq (id, label) values (5, 'fixed')`);
+
+    await query(tempDb.url, generateMigration([always], relaxed.snapshot).sql);
+    await expect(query(tempDb.url, `insert into seq (id, label) values (6, 'fixed')`)).rejects.toThrow(/non-DEFAULT value/);
   });
 });

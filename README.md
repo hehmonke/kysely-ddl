@@ -146,6 +146,7 @@ one fails. `generatedByDefaultAsIdentity()` behaves like `serial`: the sequence
 fills the value unless the insert gives one, which is what seeds with fixed ids
 need. The sequence does not move past such ids by itself, so a seed ends with
 `select setval(pg_get_serial_sequence('locale', 'id'), max(id)) from locale`.
+Switching a column between the two is `ALTER COLUMN ... SET GENERATED`.
 
 When a column name is not given, it is derived from the property name with the
 same snake_case rule as Kysely's `CamelCasePlugin`: `createdAt` -> `created_at`,
@@ -237,12 +238,15 @@ CREATE UNIQUE INDEX "friend_character_id_a_character_id_b_idx" ON "friend" ((lea
 ```
 
 An expression is written without the outer parentheses: the index adds them.
-`opclass` is written into the DDL as is, so it must be a name, `gin_trgm_ops` or
-`public.gin_trgm_ops`; the extension that provides it is yours to create, in a
-migration of its own. `unique`, `order` and `nulls` need btree, and `defineTable`
-says so for any other method. Options equal to the postgres defaults, `btree`,
-`asc`, `nulls last` after asc and `nulls first` after desc, are not written to
-the snapshot, so spelling one out is not a change.
+`opclass` and `using` are written into the DDL as is, so each must be a name:
+`gin_trgm_ops` or `public.gin_trgm_ops`, `gin` or a method an extension installs,
+`bloom`, pgvector's `hnsw`. The extension is yours to create, in a migration of
+its own. For the built-in methods `defineTable` checks what the postgres docs
+state: only btree is unique and sorts (`order`, `nulls`), and hash and spgist
+take one key. A method from an extension is left to postgres to judge. Options
+equal to the postgres defaults, `btree`, `asc`, `nulls last` after asc and
+`nulls first` after desc, are not written to the snapshot, so spelling one out
+is not a change.
 
 ### Names: auto-generation and the postgres limit
 
@@ -266,7 +270,9 @@ properties mapping to the same database name.
 ### Limitations
 
 Native enums, stored generated columns, schemas other than `public`, views,
-`DEFERRABLE`, covering indexes (`INCLUDE`), `json` (use `jsonb`). Pull requests are
+`DEFERRABLE`, `json` (use `jsonb`). Of `CREATE INDEX`: `INCLUDE`, `NULLS NOT
+DISTINCT`, `COLLATE` and operator class parameters on a key, `WITH (...)` storage
+parameters, `TABLESPACE`. Pull requests are
 welcome; [CONTRIBUTING.md](CONTRIBUTING.md) describes how such a feature is added.
 
 ## Types for Kysely

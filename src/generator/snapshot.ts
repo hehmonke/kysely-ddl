@@ -54,7 +54,7 @@ export interface TableSnapshot {
      * The access method, present only when it is not btree: snapshots of btree
      * indexes, the ones written before the field existed included, lack it.
      */
-    readonly using?: Exclude<IndexMethod, 'btree'>;
+    readonly using?: IndexMethod;
     readonly columns: readonly IndexColumnSnapshot[];
     readonly where: string | null;
     /**

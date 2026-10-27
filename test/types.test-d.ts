@@ -432,8 +432,8 @@ defineTable({
   indexes: [{ columns: [{ column: 'a', expression: c => sql`lower(${c.a})` }] }],
 });
 
-// @ts-expect-error no such method
-defineTable({ name: 'bad3', columns: indexedColumns, indexes: [{ using: 'rtree', columns: ['a'] }] });
+// a method an extension installs is any name; the built-in ones are suggested
+defineTable({ name: 'ext', columns: indexedColumns, indexes: [{ using: 'hnsw', columns: ['a'] }] });
 
 defineTable({
   name: 'bad4',
