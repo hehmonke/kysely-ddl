@@ -9,7 +9,7 @@
  * detection is a separate tool's job.
  */
 import type { DefaultValue } from '../table/columns.ts';
-import type { AnyTable, ReferentialAction, TableSpec } from '../table/define.ts';
+import type { AnyTable, IndexKey, IndexMethod, ReferentialAction, TableSpec } from '../table/define.ts';
 import { isSql, quoteLiteral, renderSql } from '../table/sql.ts';
 
 export const SNAPSHOT_VERSION = 1;
@@ -24,6 +24,24 @@ export interface ColumnSnapshot {
   readonly identity: 'always' | 'byDefault' | null;
 }
 
+/**
+ * An index key. A plain column is its name, the form every snapshot had before
+ * keys got options, so those snapshots read unchanged. A key with an operator
+ * class, a sort order or an expression is an object; options equal to the
+ * postgres defaults (`asc`, `nulls last` for asc, `nulls first` for desc) are
+ * left out, so spelling a default out is not a change.
+ */
+export type IndexColumnSnapshot =
+  | string
+  | {
+      readonly column?: string;
+      /** The rendered expression, without the parentheses the index wraps it in. */
+      readonly expression?: string;
+      readonly opclass?: string;
+      readonly order?: 'desc';
+      readonly nulls?: 'first' | 'last';
+    };
+
 export interface TableSnapshot {
   readonly name: string;
   readonly columns: readonly ColumnSnapshot[];
@@ -32,7 +50,12 @@ export interface TableSnapshot {
   readonly indexes: readonly {
     readonly name: string;
     readonly unique: boolean;
-    readonly columns: readonly string[];
+    /**
+     * The access method, present only when it is not btree: snapshots of btree
+     * indexes, the ones written before the field existed included, lack it.
+     */
+    readonly using?: IndexMethod;
+    readonly columns: readonly IndexColumnSnapshot[];
     readonly where: string | null;
     /**
      * Built and dropped with `CONCURRENTLY`. How the index is built, not what it
@@ -71,6 +94,24 @@ function renderDefault(value: DefaultValue | undefined): string | null {
   return quoteLiteral(value);
 }
 
+function indexColumnSnapshot(key: IndexKey): IndexColumnSnapshot {
+  const order = key.order === 'desc' ? 'desc' : undefined;
+  const defaultNulls = order === 'desc' ? 'first' : 'last';
+  const nulls = key.nulls === defaultNulls ? undefined : key.nulls;
+
+  if (key.column !== undefined && key.opclass === undefined && order === undefined && nulls === undefined) {
+    return key.column;
+  }
+
+  return {
+    ...(key.column === undefined ? {} : { column: key.column }),
+    ...(key.expression === undefined ? {} : { expression: renderSql(key.expression) }),
+    ...(key.opclass === undefined ? {} : { opclass: key.opclass }),
+    ...(order === undefined ? {} : { order }),
+    ...(nulls === undefined ? {} : { nulls }),
+  };
+}
+
 function tableSnapshot(spec: TableSpec): TableSnapshot {
   return {
     name: spec.name,
@@ -88,7 +129,8 @@ function tableSnapshot(spec: TableSpec): TableSnapshot {
     indexes: spec.indexes.map(i => ({
       name: i.name,
       unique: i.unique,
-      columns: [...i.columns],
+      ...(i.using === undefined || i.using === 'btree' ? {} : { using: i.using }),
+      columns: i.columns.map(indexColumnSnapshot),
       where: i.where !== undefined ? renderSql(i.where) : null,
       concurrently: i.concurrently,
     })),

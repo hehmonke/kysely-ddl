@@ -5,7 +5,7 @@
  * constraints), then create, then drop columns and tables. Foreign keys go last as
  * separate ALTERs, otherwise the CREATE TABLE order would start to matter.
  */
-import type { ColumnSnapshot, Snapshot, TableSnapshot } from './snapshot.ts';
+import type { ColumnSnapshot, IndexColumnSnapshot, Snapshot, TableSnapshot } from './snapshot.ts';
 
 type Index = TableSnapshot['indexes'][number];
 type ForeignKey = TableSnapshot['foreignKeys'][number];
@@ -81,9 +81,29 @@ function sameConstraint(a: Constraint, b: Constraint): boolean {
   return false;
 }
 
+function sameIndexColumn(a: IndexColumnSnapshot, b: IndexColumnSnapshot): boolean {
+  if (typeof a === 'string' || typeof b === 'string') {
+    return a === b;
+  }
+
+  return (
+    a.column === b.column &&
+    a.expression === b.expression &&
+    a.opclass === b.opclass &&
+    a.order === b.order &&
+    a.nulls === b.nulls
+  );
+}
+
 /** `concurrently` is left out on purpose: it says how to build the index, not what the index is. */
 function sameIndex(a: Index, b: Index): boolean {
-  return a.unique === b.unique && sameArray(a.columns, b.columns) && a.where === b.where;
+  return (
+    a.unique === b.unique &&
+    a.using === b.using &&
+    a.columns.length === b.columns.length &&
+    a.columns.every((column, i) => sameIndexColumn(column, b.columns[i] ?? '')) &&
+    a.where === b.where
+  );
 }
 
 function sameColumn(a: ColumnSnapshot, b: ColumnSnapshot): boolean {

@@ -61,6 +61,30 @@ export type ResolveColumns<TCols extends Record<string, AnyColumn>> = {
 
 export type ReferentialAction = 'cascade' | 'restrict' | 'no action' | 'set null' | 'set default';
 
+/**
+ * Index access methods: the ones built into postgres, `btree` being what it builds
+ * when none is given, or any other name, for a method an extension installs
+ * (`bloom`, pgvector's `hnsw` and `ivfflat`).
+ */
+export type IndexMethod = 'btree' | 'hash' | 'gist' | 'spgist' | 'gin' | 'brin' | (string & {});
+
+/** Options of one index key. `order` and `nulls` are btree only: the other methods do not sort. */
+export interface IndexKeyOptions {
+  /** An operator class, written as is: `gin_trgm_ops`, `public.gin_trgm_ops`. */
+  readonly opclass?: string;
+  readonly order?: 'asc' | 'desc';
+  readonly nulls?: 'first' | 'last';
+}
+
+/** An index key resolved: exactly one of `column`, the database name, and `expression` is set. */
+export interface IndexKey {
+  readonly column: string | undefined;
+  readonly expression: Sql | undefined;
+  readonly opclass: string | undefined;
+  readonly order: 'asc' | 'desc' | undefined;
+  readonly nulls: 'first' | 'last' | undefined;
+}
+
 /** A column with its name already resolved; this is what goes into the snapshot. */
 export interface ResolvedColumn extends Omit<ColumnSpec, 'name'> {
   readonly name: string;
@@ -76,7 +100,8 @@ export interface TableSpec {
   readonly indexes: readonly {
     readonly name: string;
     readonly unique: boolean;
-    readonly columns: readonly string[];
+    readonly using: IndexMethod | undefined;
+    readonly columns: readonly IndexKey[];
     readonly where: Sql | undefined;
     /** Built and dropped with `CONCURRENTLY`, in a migration of its own. */
     readonly concurrently: boolean;
@@ -120,8 +145,18 @@ export function isTable(value: unknown): value is AnyTable {
   return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[TABLE_BRAND] === true;
 }
 
-/** Column references for the callbacks in checks and partial indexes. */
+/** Column references for the callbacks in checks, partial indexes and index expressions. */
 type Refs<TCols> = { readonly [K in keyof TCols]: Sql };
+
+/**
+ * An index key: a column, a column with options, or an expression. An expression
+ * is wrapped in parentheses when rendered, so `` sql`lower(${c.email})` `` and
+ * `` sql`${c.metadata} ->> 'type'` `` are both written without them.
+ */
+export type IndexColumn<TCols> =
+  | (keyof TCols & string)
+  | (IndexKeyOptions & { readonly column: keyof TCols & string; readonly expression?: never })
+  | (IndexKeyOptions & { readonly expression: (c: Refs<TCols>) => Sql; readonly column?: never });
 
 // ── options ──────────────────────────────────────────────────────────────────
 
@@ -189,10 +224,18 @@ export interface TableOptions<
     readonly columns: readonly (keyof TCols & string)[];
   }[];
   readonly indexes?: readonly {
-    /** When not set, built as `{table}_{columns}_idx`. */
+    /**
+     * When not set, built as `{table}_{columns}_idx`, where the columns of an
+     * expression key are the ones it references.
+     */
     readonly name?: string;
     readonly unique?: boolean;
-    readonly columns: readonly (keyof TCols & string)[];
+    /**
+     * The access method; btree when not set. Among the built-in ones `unique`,
+     * `order` and `nulls` need btree, and hash and spgist take one key.
+     */
+    readonly using?: IndexMethod;
+    readonly columns: readonly IndexColumn<TCols>[];
     readonly where?: (c: Refs<TCols>) => Sql;
     /**
      * Build and drop the index with `CONCURRENTLY`, without locking the table
@@ -210,6 +253,20 @@ export interface TableOptions<
     readonly expression: (c: Refs<TCols>) => Sql;
   }[];
 }
+
+/** An operator class, optionally schema-qualified. It is written into the DDL unquoted. */
+const OPCLASS = /^[a-z_][a-z0-9_$]*(\.[a-z_][a-z0-9_$]*)?$/i;
+
+/** An access method name. `using` is written into the DDL unquoted too. */
+const METHOD = /^[a-z_][a-z0-9_$]*$/i;
+
+/**
+ * What the built-in methods other than btree cannot do, from the postgres docs:
+ * only btree is unique and sorts, and only btree, gist, gin and brin take more
+ * than one key. A method an extension installs is left to postgres to judge.
+ */
+const BUILTIN_NOT_BTREE: ReadonlySet<string> = new Set(['hash', 'gist', 'spgist', 'gin', 'brin']);
+const SINGLE_KEY_METHODS: ReadonlySet<string> = new Set(['hash', 'spgist']);
 
 /**
  * A fragment that cannot be rendered is a mistake in the schema. It is caught
@@ -295,19 +352,91 @@ export function defineTable<TName extends string, TCols extends Record<string, A
   const typedRefs = refs as Refs<TCols>;
 
   // ── indexes ────────────────────────────────────────────────────────────────
+  const resolveKey = (key: IndexColumn<TCols>): IndexKey => {
+    if (typeof key === 'string') {
+      return { column: toDb([key])[0], expression: undefined, opclass: undefined, order: undefined, nulls: undefined };
+    }
+
+    if ((key.column === undefined) === (key.expression === undefined)) {
+      throw new Error(`${name}: an index key has either \`column\` or \`expression\`, exactly one of them`);
+    }
+
+    if (key.opclass !== undefined && !OPCLASS.test(key.opclass)) {
+      throw new Error(`${name}: "${key.opclass}" is not an operator class name`);
+    }
+
+    return {
+      column: key.column === undefined ? undefined : toDb([key.column])[0],
+      expression: key.expression?.(typedRefs),
+      opclass: key.opclass,
+      order: key.order,
+      nulls: key.nulls,
+    };
+  };
+
   const indexes = (options.indexes ?? []).map(index => {
-    const indexColumns = toDb(index.columns);
-    const indexName = resolveName(index.name, indexColumns, AUTO_NAMES.index, 'index');
+    if (index.columns.length === 0) {
+      throw new Error(`${name}: ${index.name === undefined ? 'an index' : `index ${index.name}`} has no columns`);
+    }
+
+    if (index.using !== undefined && !METHOD.test(index.using)) {
+      throw new Error(`${name}: "${index.using}" is not an index method name`);
+    }
+
+    const keys = index.columns.map(resolveKey);
+    // plain columns name the index as they always have; an expression adds the
+    // columns it references that are not named yet
+    const referenced: string[] = [];
+
+    for (const key of keys) {
+      if (key.expression === undefined) {
+        referenced.push(key.column ?? '');
+      } else {
+        referenced.push(...collectColumns(key.expression).filter(column => !referenced.includes(column)));
+      }
+    }
+
+    if (index.name === undefined && referenced.length === 0) {
+      throw new Error(
+        `${name}: an index without a name must reference at least one column, ` +
+          'otherwise there is nothing to build the name from. Set the name explicitly.',
+      );
+    }
+
+    const indexName = resolveName(index.name, referenced, AUTO_NAMES.index, 'index');
     const where = index.where !== undefined ? index.where(typedRefs) : undefined;
 
     if (where !== undefined) {
       assertRenders(where, `${name}: index ${indexName}`);
     }
 
+    for (const key of keys) {
+      if (key.expression !== undefined) {
+        assertRenders(key.expression, `${name}: index ${indexName}`);
+      }
+    }
+
+    const using = index.using;
+
+    if (using !== undefined && BUILTIN_NOT_BTREE.has(using)) {
+      if (index.unique === true) {
+        throw new Error(`${name}: index ${indexName}: only btree indexes can be unique, not ${using}`);
+      }
+
+      if (keys.some(key => key.order !== undefined || key.nulls !== undefined)) {
+        throw new Error(`${name}: index ${indexName}: \`order\` and \`nulls\` need btree, ${using} does not sort`);
+      }
+
+      if (SINGLE_KEY_METHODS.has(using) && keys.length > 1) {
+        throw new Error(`${name}: index ${indexName}: ${using} indexes take one key, not ${keys.length}`);
+      }
+    }
+
     return {
       name: indexName,
       unique: index.unique ?? false,
-      columns: indexColumns,
+      using,
+      columns: keys,
       where,
       concurrently: index.concurrently ?? false,
     };

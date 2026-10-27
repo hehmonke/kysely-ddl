@@ -8,7 +8,26 @@ describe('column builders: one builder per column type', () => {
     expect('defaultNow' in t.uuid()).toBe(false);
     expect('generatedAlwaysAsIdentity' in t.integer()).toBe(true);
     expect('generatedAlwaysAsIdentity' in t.bigint()).toBe(true);
+    expect('generatedAlwaysAsIdentity' in t.smallint()).toBe(true);
+    expect('generatedByDefaultAsIdentity' in t.integer()).toBe(true);
     expect('generatedAlwaysAsIdentity' in t.numeric()).toBe(false);
+    expect('generatedAlwaysAsIdentity' in t.doublePrecision()).toBe(false);
+  });
+
+  test('the identity modifiers set the kind of identity and NOT NULL', () => {
+    expect(t.integer().generatedAlwaysAsIdentity().spec).toMatchObject({ identity: 'always', notNull: true });
+    expect(t.smallint().generatedByDefaultAsIdentity().spec).toMatchObject({ identity: 'byDefault', notNull: true });
+  });
+
+  test('text, smallint and double precision', () => {
+    expect(t.text().spec).toMatchObject({ kind: 'text', sqlType: 'text' });
+    expect(t.smallint().spec).toMatchObject({ kind: 'smallint', sqlType: 'smallint' });
+    expect(t.doublePrecision().spec).toMatchObject({ kind: 'doublePrecision', sqlType: 'double precision' });
+  });
+
+  test('int() is integer() under its short name', () => {
+    expect(t.int).toBe(t.integer);
+    expect(t.int('n').spec).toEqual(t.integer('n').spec);
   });
 
   test('a chain keeps its builder; an array column is a plain column', () => {
