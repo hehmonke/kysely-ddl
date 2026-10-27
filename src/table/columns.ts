@@ -2,8 +2,9 @@
  * Column builders as chains, like in drizzle.
  *
  * The set of types is what application schemas actually need:
- * uuid / varchar / integer / bigint / boolean / numeric / timestamp / jsonb,
- * plus `enum`, a varchar with an automatic check constraint. Each type is a file
+ * uuid / varchar / text / smallint / integer / bigint / boolean / numeric /
+ * double precision / timestamp / jsonb, plus `enum`, a varchar with an
+ * automatic check constraint. Each type is a file
  * in `column-types/`; adding a type is a new file there plus a line in
  * `columnBuilders`.
  *
@@ -26,8 +27,8 @@
  *
  * The shared modifiers, `notNull()`, `default()`, `array()`, `$type()`, live on
  * `ColumnBuilder` here. A modifier that applies to some types only lives on a
- * subclass in the type's file: `defaultNow()` on the timestamp builder,
- * `generatedAlwaysAsIdentity()` on the integer one, so each is offered exactly
+ * subclass in the type's file: `defaultNow()` on the timestamp builder, the
+ * identity modifiers on the integer one, so each is offered exactly
  * where it makes sense. A chain keeps its builder: `BuilderFor` picks the class
  * from the column kind at the type level, `next()` at runtime. An array column is
  * a plain column, since neither of those modifiers applies to an array.
@@ -37,7 +38,18 @@ import type { TimestampColumnBuilder } from './column-types/timestamp.ts';
 import type { Sql } from './sql.ts';
 
 /** The base postgres type of a column; `enum()` is a varchar. */
-export type ColumnKind = 'uuid' | 'varchar' | 'integer' | 'bigint' | 'boolean' | 'numeric' | 'timestamp' | 'jsonb';
+export type ColumnKind =
+  | 'uuid'
+  | 'varchar'
+  | 'text'
+  | 'smallint'
+  | 'integer'
+  | 'bigint'
+  | 'boolean'
+  | 'numeric'
+  | 'doublePrecision'
+  | 'timestamp'
+  | 'jsonb';
 
 /** Column config at the type level. */
 export interface ColumnCfg {
@@ -103,7 +115,7 @@ export type BuilderFor<T extends ColumnCfg> = T['array'] extends true
   ? ColumnBuilder<T>
   : T['kind'] extends 'timestamp'
     ? TimestampColumnBuilder<T>
-    : T['kind'] extends 'integer' | 'bigint'
+    : T['kind'] extends 'smallint' | 'integer' | 'bigint'
       ? IntegerColumnBuilder<T>
       : ColumnBuilder<T>;
 
@@ -121,7 +133,7 @@ export class ColumnBuilder<T extends ColumnCfg = ColumnCfg> {
     return next<T, { hasDefault: true }>(this, { default: value });
   }
 
-  /** An array column is a plain column: `defaultNow()` and identity do not apply to arrays. */
+  /** An array column is a plain column: `defaultNow()` and the identity modifiers do not apply to arrays. */
   array(): ColumnBuilder<Update<T, { data: T['data'][]; array: true }>> {
     return new ColumnBuilder<Update<T, { data: T['data'][]; array: true }>>({ ...this.spec, array: true });
   }

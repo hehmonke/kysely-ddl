@@ -6,6 +6,7 @@ import { type Insertable, type InsertObject, type Selectable, sql, type UpdateOb
 
 import {
   type CamelCase,
+  type ColumnBuilders,
   defineTable,
   type InferKyselyDatabase,
   type InferKyselyTable,
@@ -382,4 +383,61 @@ defineTable({
     // @ts-expect-error string[] carries no literals, with a name as well
     c: t.enum('c', plainStrings),
   }),
+});
+
+// ── text, smallint, double precision, int, identity by default ────────────────
+
+const counterTable = defineTable({
+  name: 'counter',
+  columns: t => ({
+    id: t.int().generatedByDefaultAsIdentity(),
+    seq: t.integer().generatedAlwaysAsIdentity(),
+    kind: t.smallint().notNull(),
+    label: t.text().notNull(),
+    ratio: t.doublePrecision(),
+  }),
+});
+
+type CounterTable = InferKyselyTable<typeof counterTable>;
+
+export type NewColumnTypeTests = [
+  Expect<Equal<Simplify<Selectable<CounterTable>>, { id: number; seq: number; kind: number; label: string; ratio: number | null }>>,
+  // by default: an insert may give the id or leave it out; always: never
+  Expect<Equal<Simplify<Insertable<CounterTable>>, { id?: number; kind: number; label: string; ratio?: number | null }>>,
+];
+
+// ── index keys ───────────────────────────────────────────────────────────────
+
+defineTable({
+  name: 'indexed',
+  columns: t => ({ a: t.text(), b: t.int(), tags: t.int().array() }),
+  indexes: [
+    { using: 'gin', columns: [{ column: 'a', opclass: 'gin_trgm_ops' }] },
+    { using: 'gin', columns: ['tags'] },
+    { columns: ['b', { column: 'a', order: 'desc', nulls: 'last' }] },
+    { columns: [{ expression: c => sql`lower(${c.a})` }, 'b'] },
+  ],
+});
+
+// one wrong key per table, so that each @ts-expect-error covers exactly its own error
+const indexedColumns = (t: ColumnBuilders) => ({ a: t.text(), b: t.int() });
+
+// @ts-expect-error no such column in a key object
+defineTable({ name: 'bad1', columns: indexedColumns, indexes: [{ columns: [{ column: 'nope' }] }] });
+
+defineTable({
+  name: 'bad2',
+  columns: indexedColumns,
+  // @ts-expect-error a key has a column or an expression, not both
+  indexes: [{ columns: [{ column: 'a', expression: c => sql`lower(${c.a})` }] }],
+});
+
+// @ts-expect-error no such method
+defineTable({ name: 'bad3', columns: indexedColumns, indexes: [{ using: 'rtree', columns: ['a'] }] });
+
+defineTable({
+  name: 'bad4',
+  columns: indexedColumns,
+  // @ts-expect-error no such column in the expression callback
+  indexes: [{ name: 'x_idx', columns: [{ expression: c => sql`lower(${c.nope})` }] }],
 });

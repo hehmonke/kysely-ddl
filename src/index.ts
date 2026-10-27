@@ -28,7 +28,7 @@ export { generateMigration } from './generator/generate.ts';
 export type { GenerateResult } from './generator/generate.ts';
 export { renderChange, renderChanges, renderConcurrentStatements, renderStatements } from './generator/render.ts';
 export { buildSnapshot, EMPTY_SNAPSHOT, SNAPSHOT_VERSION } from './generator/snapshot.ts';
-export type { ColumnSnapshot, Snapshot, TableSnapshot } from './generator/snapshot.ts';
+export type { ColumnSnapshot, IndexColumnSnapshot, Snapshot, TableSnapshot } from './generator/snapshot.ts';
 export type { InferKyselyDatabase, InferKyselyTable, InferOptions } from './kysely/infer.ts';
 export { jsonb, jsonbArray } from './kysely/json.ts';
 export type { Jsonb } from './kysely/json.ts';
@@ -60,6 +60,10 @@ export { AUTO_NAMES, defineTable, isTable, ref } from './table/define.ts';
 export type {
   AnyTable,
   ForeignKeyDef,
+  IndexColumn,
+  IndexKey,
+  IndexKeyOptions,
+  IndexMethod,
   Reference,
   ReferentialAction,
   ResolveColumns,

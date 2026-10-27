@@ -4,7 +4,7 @@
 import { quoteIdentifier as q } from '../table/sql.ts';
 
 import type { Change, Constraint } from './diff.ts';
-import type { ColumnSnapshot, TableSnapshot } from './snapshot.ts';
+import type { ColumnSnapshot, IndexColumnSnapshot, TableSnapshot } from './snapshot.ts';
 
 /** Every variant is handled above; TypeScript does not let control get here. */
 function unreachable(value: never): never {
@@ -86,12 +86,36 @@ function createTable(table: TableSnapshot): string {
   return `CREATE TABLE ${q(table.name)} (\n${lines.map(l => `\t${l}`).join(',\n')}\n);`;
 }
 
+function indexColumn(key: IndexColumnSnapshot): string {
+  if (typeof key === 'string') {
+    return q(key);
+  }
+
+  const parts = [key.column !== undefined ? q(key.column) : `(${key.expression ?? ''})`];
+
+  if (key.opclass !== undefined) {
+    parts.push(key.opclass);
+  }
+
+  if (key.order === 'desc') {
+    parts.push('DESC');
+  }
+
+  if (key.nulls !== undefined) {
+    parts.push(`NULLS ${key.nulls.toUpperCase()}`);
+  }
+
+  return parts.join(' ');
+}
+
 function createIndex(table: string, index: TableSnapshot['indexes'][number]): string {
   const unique = index.unique ? 'UNIQUE ' : '';
   const concurrently = index.concurrently ? 'CONCURRENTLY ' : '';
+  const using = index.using === undefined ? '' : ` USING ${index.using}`;
+  const keys = index.columns.map(indexColumn).join(',');
   const where = index.where === null ? '' : ` WHERE ${index.where}`;
 
-  return `CREATE ${unique}INDEX ${concurrently}${q(index.name)} ON ${q(table)} (${columns(index.columns)})${where};`;
+  return `CREATE ${unique}INDEX ${concurrently}${q(index.name)} ON ${q(table)}${using} (${keys})${where};`;
 }
 
 function dropIndexConcurrently(name: string): string {

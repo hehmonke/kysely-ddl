@@ -122,9 +122,9 @@ A hybrid: columns as chains, everything else as a declarative block.
 
 | | |
 |---|---|
-| column types | `t.uuid` `t.varchar({ length })` `t.integer` `t.bigint` `t.boolean` `t.numeric({ precision, scale })` `t.timestamp({ withTimezone, precision })` `t.jsonb` `t.enum([...])` |
-| modifiers | `.notNull()` `.default(v \| sql)` `.array()` `.$type<T>()`; on a timestamp `.defaultNow()`, on an integer or bigint `.generatedAlwaysAsIdentity()` |
-| table | `primaryKey` (composite too), `uniques`, `indexes` (unique, partial via `where`, built online via `concurrently`), `foreignKeys` (`onDelete` / `onUpdate`), `checks`; names are optional everywhere |
+| column types | `t.uuid` `t.varchar({ length })` `t.text` `t.smallint` `t.integer` (alias `t.int`) `t.bigint` `t.boolean` `t.numeric({ precision, scale })` `t.doublePrecision` `t.timestamp({ withTimezone, precision })` `t.jsonb` `t.enum([...])` |
+| modifiers | `.notNull()` `.default(v \| sql)` `.array()` `.$type<T>()`; on a timestamp `.defaultNow()`, on a smallint, integer or bigint `.generatedAlwaysAsIdentity()` and `.generatedByDefaultAsIdentity()` |
+| table | `primaryKey` (composite too), `uniques`, `indexes` (unique, partial via `where`, a method via `using`, keys with an operator class, a sort order or an expression, built online via `concurrently`), `foreignKeys` (`onDelete` / `onUpdate`), `checks`; names are optional everywhere |
 | expressions | Kysely's `` sql`...` ``: `${c.column}` is the column, `${value}` an inlined literal, fragments nest; `inArray(c.status, [...])` |
 
 `sql` is Kysely's own template tag, imported from `kysely`; `kysely-ddl` has no
@@ -136,10 +136,16 @@ inlined, a `Date`, an object, an array, is an error at `defineTable`, naming the
 table and the column, index or check.
 
 Each column type has a builder of its own, and a modifier that applies to some
-types only is offered exactly there: `defaultNow()` on a timestamp,
-`generatedAlwaysAsIdentity()` on an integer or bigint. An array column is a plain
-column, neither applies to it. The chain keeps its builder, so
+types only is offered exactly there: `defaultNow()` on a timestamp, the identity
+modifiers on a smallint, integer or bigint. An array column is a plain column,
+neither applies to it. The chain keeps its builder, so
 `t.timestamp().notNull().defaultNow()` works.
+
+`generatedAlwaysAsIdentity()` leaves the value to postgres: an insert that gives
+one fails. `generatedByDefaultAsIdentity()` behaves like `serial`: the sequence
+fills the value unless the insert gives one, which is what seeds with fixed ids
+need. The sequence does not move past such ids by itself, so a seed ends with
+`select setval(pg_get_serial_sequence('locale', 'id'), max(id)) from locale`.
 
 When a column name is not given, it is derived from the property name with the
 same snake_case rule as Kysely's `CamelCasePlugin`: `createdAt` -> `created_at`,
@@ -149,6 +155,7 @@ config second: `t.varchar('title', { length: 200 })`.
 
 TypeScript value types match what the driver returns, without modes like
 `bigint({ mode })`: `bigint` and `numeric` are strings (no precision loss),
+`smallint`, `integer` and `doublePrecision` are numbers, `text` is a string,
 `timestamp` is `Date`, `jsonb` is `unknown`. A driver told to return int8 as
 `bigint` is matched by the `bigint: true` infer option, see "Types for Kysely".
 For another type use `$type<T>()` and convert on your side.
@@ -197,6 +204,46 @@ foreignKeys: [
 Foreign keys are always emitted as separate `ALTER TABLE` statements after all
 `CREATE TABLE`s, so declaration order and circular references do not matter.
 
+### Indexes
+
+A key in `columns` is a column, a column with options, or an expression; `using`
+picks the access method, btree when it is not given:
+
+```ts
+indexes: [
+  { using: 'gin', columns: [{ column: 'firstname', opclass: 'gin_trgm_ops' }] },
+  { using: 'gin', columns: ['permissions'] }, // an int[] column, the default array_ops
+  { columns: ['accountId', { column: 'createdAt', order: 'desc' }] },
+  {
+    unique: true,
+    columns: [
+      { expression: c => sql`least(${c.characterIdA}, ${c.characterIdB})` },
+      { expression: c => sql`greatest(${c.characterIdA}, ${c.characterIdB})` },
+    ],
+  },
+  {
+    columns: [{ expression: c => sql`${c.metadata} ->> 'vehicleId'` }, 'status'],
+    where: c => sql`${c.metadata} ->> 'type' = 'vehicle'`,
+  },
+],
+```
+
+Three of them in SQL, each on a table of its own:
+
+```sql
+CREATE INDEX "character_firstname_idx" ON "character" USING gin ("firstname" gin_trgm_ops);
+CREATE INDEX "economy_posting_account_id_created_at_idx" ON "economy_posting" ("account_id","created_at" DESC);
+CREATE UNIQUE INDEX "friend_character_id_a_character_id_b_idx" ON "friend" ((least("character_id_a", "character_id_b")),(greatest("character_id_a", "character_id_b")));
+```
+
+An expression is written without the outer parentheses: the index adds them.
+`opclass` is written into the DDL as is, so it must be a name, `gin_trgm_ops` or
+`public.gin_trgm_ops`; the extension that provides it is yours to create, in a
+migration of its own. `unique`, `order` and `nulls` need btree, and `defineTable`
+says so for any other method. Options equal to the postgres defaults, `btree`,
+`asc`, `nulls last` after asc and `nulls first` after desc, are not written to
+the snapshot, so spelling one out is not a change.
+
 ### Names: auto-generation and the postgres limit
 
 | object | pattern | example |
@@ -205,7 +252,7 @@ Foreign keys are always emitted as separate `ALTER TABLE` statements after all
 | unique | `{table}_{columns}_uq` | `ticket_number_uq` |
 | foreign key | `{table}_{columns}_fk` | `session_user_id_fk` |
 | check | `{table}_{expression columns}_check` | `ticket_status_check` |
-| index | `{table}_{columns}_idx` | `user_resource_transaction_user_id_resource_idx` |
+| index | `{table}_{columns}_idx`, expression keys by the columns they reference | `user_resource_transaction_user_id_resource_idx` |
 
 Postgres identifiers are limited to **63 bytes**, and anything longer is silently
 truncated. The snapshot would remember the long name, the database would hold
@@ -213,13 +260,13 @@ the short one, and the diff would forever try to create the "missing" index.
 So auto-names are shortened deterministically with a hash suffix derived from
 the full name, while an explicit name over the limit is a `defineTable` error.
 Collisions are caught too: two objects on the same columns, an index named like
-a unique constraint, a check with neither columns nor a name, two properties
-mapping to the same database name.
+a unique constraint, a check or an index with neither columns nor a name, two
+properties mapping to the same database name.
 
 ### Limitations
 
 Native enums, stored generated columns, schemas other than `public`, views,
-`DEFERRABLE`, covering indexes, index methods other than btree. Pull requests are
+`DEFERRABLE`, covering indexes (`INCLUDE`), `json` (use `jsonb`). Pull requests are
 welcome; [CONTRIBUTING.md](CONTRIBUTING.md) describes how such a feature is added.
 
 ## Types for Kysely
