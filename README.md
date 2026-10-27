@@ -205,6 +205,32 @@ foreignKeys: [
 Foreign keys are always emitted as separate `ALTER TABLE` statements after all
 `CREATE TABLE`s, so declaration order and circular references do not matter.
 
+#### Tables with keys on each other: `defineForeignKey`
+
+Two tables that reference each other cannot both declare their key in
+`defineTable`: their modules would import each other, one of them would see the
+other before it is defined, and TypeScript could not infer either type. Keep one
+key in its table and declare the other with `defineForeignKey`, in a third
+module that imports both:
+
+```ts
+// fraction.table.ts:        foreignKeys: [{ columns: ['leaderId'], references: ref(fractionMemberTable, ['id']) }]
+// fraction-member.table.ts: no import of fraction.table.ts
+// fraction-member.fk.ts:
+export const fractionMemberFractionFk = defineForeignKey(fractionMemberTable, {
+  columns: ['fractionId'],               // checked against fractionMemberTable
+  references: ref(fractionTable, ['id']), // checked against fractionTable
+  onDelete: 'cascade',
+});
+```
+
+It takes the options of a `foreignKeys` entry, with the same auto-name and
+checks. Pass it to `generateMigration` in the same list as the tables
+(`loadTables` collects exported keys too); the generator puts it into its
+table, so the snapshot and the SQL are the ones the key inside `defineTable`
+gives, and moving a key between the two under the same name is not a change.
+Its table missing from the list is an error.
+
 ### Indexes
 
 A key in `columns` is a column, a column with options, or an expression; `using`
@@ -426,8 +452,9 @@ with a dot, and `**` does not descend into `node_modules` or dot-directories:
 name such a directory explicitly to reach inside.
 
 Every matched file is imported and every exported table collected, sorted by
-table name, so the result does not depend on where a table lives. A table
-re-exported through a barrel is counted once. Two different tables with the same
+table name, so the result does not depend on where a table lives, followed by
+the exported `defineForeignKey` keys. A table or a key re-exported through a
+barrel is counted once. Two different tables with the same
 database name are an error, as they are for `generateMigration`.
 
 The loading is strict on purpose: a table the pattern misses is not merely
@@ -437,7 +464,8 @@ warning:
 - nothing matches the patterns, or nothing among the matched files exports a table;
 - a matched file fails to import — the message names the file;
 - a foreign key points at a table none of the matched files exports: the pattern
-  is too narrow, and the migration would reference a table the snapshot does not have.
+  is too narrow, and the migration would reference a table the snapshot does not have;
+- a `defineForeignKey` key belongs to a table none of the matched files exports.
 
 Importing `.ts` at runtime is the runtime's business: Bun imports it directly,
 Node needs type stripping (on by default since 22.18, `--experimental-strip-types`

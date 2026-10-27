@@ -58,10 +58,12 @@ export { ColumnBuilder } from './table/columns.ts';
 // BuilderFor, Fresh and Update are in the inferred type of every column helper and
 // table, so a project that emits declarations has to be able to name them
 export type { AnyColumn, BuilderFor, ColumnCfg, ColumnKind, ColumnSpec, DefaultValue, Fresh, Update } from './table/columns.ts';
-export { AUTO_NAMES, defineTable, isTable, ref } from './table/define.ts';
+export { AUTO_NAMES, defineForeignKey, defineTable, isForeignKey, isTable, ref } from './table/define.ts';
 export type {
   AnyTable,
+  ForeignKey,
   ForeignKeyDef,
+  ForeignKeySpec,
   IndexColumn,
   IndexKey,
   IndexKeyOptions,
@@ -71,6 +73,7 @@ export type {
   ResolveColumns,
   ResolvedColumn,
   ResolvedColumnCfg,
+  SchemaObject,
   Table,
   TableOptions,
   TableSpec,

@@ -25,7 +25,7 @@ function runTsc(args: readonly string[], cwd: string): { code: number; output: s
 
 const consumer = `
 import { sql } from 'kysely';
-import { columnBuilders as t, defineTable, ref } from 'kysely-ddl';
+import { columnBuilders as t, defineForeignKey, defineTable, ref } from 'kysely-ddl';
 
 type UserId = string & { readonly __brand: 'user' };
 
@@ -57,6 +57,8 @@ export const sessionTable = defineTable({
   columns: t => ({ id: t.uuid().notNull(), userId: userIdColumn('user_id').notNull() }),
   foreignKeys: [{ columns: ['userId'], references: ref(userTable, ['id']) }],
 });
+
+export const sessionUserFk = defineForeignKey(sessionTable, { name: 'session_user_fk', columns: ['userId'], references: ref(userTable, ['id']) });
 `;
 
 let dir: string;

@@ -59,19 +59,27 @@ try {
   await db.insertInto('user').values({ nickname: 'smoke' }).execute();
   assert.deepEqual(await db.selectFrom('user').select('nickname').execute(), [{ nickname: 'smoke' }]);
 
-  // loadTables under Node: a glob, a dynamic import of the found file, and the
-  // brand recognized across a module the package did not load itself
+  // loadTables under Node: a glob, a dynamic import of the found files, and the brands
+  // of a table and a foreign key recognized across modules the package did not load itself
   const schemaDir = path.join(dir, 'schema');
+  const dist = JSON.stringify(new URL('../dist/index.js', import.meta.url).href);
   fs.mkdirSync(schemaDir, { recursive: true });
   fs.writeFileSync(
     path.join(schemaDir, 'session.table.mjs'),
-    `import { defineTable } from ${JSON.stringify(new URL('../dist/index.js', import.meta.url).href)};\n` +
+    `import { defineTable } from ${dist};\n` +
       "export const sessionTable = defineTable({ name: 'session', " +
-      "columns: t => ({ id: t.uuid().notNull() }), primaryKey: { columns: ['id'] } });\n",
+      "columns: t => ({ id: t.uuid().notNull(), parentId: t.uuid() }), primaryKey: { columns: ['id'] } });\n",
+  );
+  fs.writeFileSync(
+    path.join(schemaDir, 'session.fk.mjs'),
+    `import { defineForeignKey, ref } from ${dist};\n` +
+      "import { sessionTable } from './session.table.mjs';\n" +
+      "export const sessionParentFk = defineForeignKey(sessionTable, { columns: ['parentId'], references: ref(sessionTable, ['id']) });\n",
   );
 
-  const loaded = await loadTables('**/*.table.mjs', { cwd: schemaDir });
-  assert.deepEqual(loaded.map(table => table.spec.name), ['session']);
+  const loaded = await loadTables('**/*.mjs', { cwd: schemaDir });
+  assert.deepEqual(loaded.map(entry => entry.spec.name), ['session', 'session_parent_id_fk']);
+  assert.match(generateMigration(loaded).sql, /ADD CONSTRAINT "session_parent_id_fk" FOREIGN KEY \("parent_id"\)/);
 
   console.log(`smoke-node: ok (${process.version}, migration ${init} applied via pg)`);
 } finally {

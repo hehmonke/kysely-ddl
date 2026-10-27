@@ -5,8 +5,10 @@
 import { type Insertable, type InsertObject, type Selectable, sql, type UpdateObject } from 'kysely';
 
 import {
+  buildSnapshot,
   type CamelCase,
   type ColumnBuilders,
+  defineForeignKey,
   defineTable,
   type InferKyselyDatabase,
   type InferKyselyTable,
@@ -111,6 +113,40 @@ defineTable({
   // @ts-expect-error no such column
   indexes: [{ columns: ['id', 'missing'] }],
 });
+
+// ── defineForeignKey: column names checked on both sides ─────────────────────
+
+const sessionTable = defineTable({
+  name: 'session',
+  columns: t => ({ id: t.uuid().notNull(), userId: t.uuid() }),
+});
+
+const sessionUserFk = defineForeignKey(sessionTable, { columns: ['userId'], references: ref(userTable, ['id']) });
+
+defineForeignKey(sessionTable, {
+  // @ts-expect-error the table the key belongs to has no such column
+  columns: ['nope'],
+  references: ref(userTable, ['id']),
+});
+
+defineForeignKey(sessionTable, {
+  // @ts-expect-error a database name, not a property
+  columns: ['user_id'],
+  references: ref(userTable, ['id']),
+});
+
+defineForeignKey(sessionTable, {
+  columns: ['userId'],
+  // @ts-expect-error the target table has no such column
+  references: ref(userTable, ['nope']),
+});
+
+// tables and keys go to the generator in one list, and the row types skip the keys
+export const mixedSchema = buildSnapshot([userTable, sessionTable, sessionUserFk]);
+
+type KeyedDB = InferKyselyDatabase<{ userTable: typeof userTable; sessionTable: typeof sessionTable; sessionUserFk: typeof sessionUserFk }>;
+
+export type ForeignKeyTests = [Expect<Equal<keyof KeyedDB, 'user' | 'session'>>];
 
 // ── jsonb: writes only through the helpers ───────────────────────────────────
 

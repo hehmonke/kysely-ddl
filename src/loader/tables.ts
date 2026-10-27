@@ -1,6 +1,7 @@
 /**
- * `loadTables`: glob patterns -> the tables `generateMigration` takes, so that a
- * schema spread over many files is pointed at instead of being listed by hand:
+ * `loadTables`: glob patterns -> the tables `generateMigration` takes, and the
+ * foreign keys `defineForeignKey` declares outside them, so that a schema spread
+ * over many files is pointed at instead of being listed by hand:
  *
  * ```ts
  * const tables = await loadTables('../schema-core/src/lib/tables/**\/*.table.ts');
@@ -18,7 +19,7 @@
  */
 import { pathToFileURL } from 'node:url';
 
-import { type AnyTable, isTable } from '../table/define.ts';
+import { type AnyTable, type ForeignKey, isForeignKey, isTable, type SchemaObject } from '../table/define.ts';
 
 import { globFiles } from './glob.ts';
 
@@ -44,8 +45,8 @@ async function importFile(file: string): Promise<Record<string, unknown>> {
   }
 }
 
-interface Found {
-  readonly table: AnyTable;
+interface Found<T> {
+  readonly value: T;
   readonly file: string;
   /** The export it was found under; for error messages. */
   readonly key: string;
@@ -57,19 +58,37 @@ interface Found {
  * know, and the migration would fail on apply — or, worse, the missing tables
  * would look dropped.
  */
-function assertSelfContained(found: readonly Found[]): void {
-  const names = new Set(found.map(entry => entry.table.spec.name));
+function assertSelfContained(tables: readonly Found<AnyTable>[], foreignKeys: readonly Found<ForeignKey>[]): void {
+  const names = new Set(tables.map(entry => entry.value.spec.name));
+  const tooNarrow = 'The pattern is too narrow: widen it, or the generated migration would reference a table the snapshot does not have.';
 
-  for (const entry of found) {
-    for (const foreignKey of entry.table.spec.foreignKeys) {
-      if (names.has(foreignKey.refTable)) {
-        continue;
+  for (const entry of tables) {
+    for (const foreignKey of entry.value.spec.foreignKeys) {
+      if (!names.has(foreignKey.refTable)) {
+        throw new Error(
+          `loadTables: table "${entry.value.spec.name}" (${entry.file}) references "${foreignKey.refTable}", ` +
+            `which none of the matched files exports. ${tooNarrow}`,
+        );
       }
+    }
+  }
 
+  for (const entry of foreignKeys) {
+    const { table, spec } = entry.value;
+
+    // the same object, not just the name: the key was resolved against its columns
+    if (!tables.some(found => found.value === table)) {
       throw new Error(
-        `loadTables: table "${entry.table.spec.name}" (${entry.file}) references "${foreignKey.refTable}", ` +
-          'which none of the matched files exports. The pattern is too narrow: widen it, or the generated ' +
-          'migration would reference a table the snapshot does not have.',
+        `loadTables: foreign key "${spec.name}" (${entry.file}) belongs to table "${table.spec.name}", ` +
+          'which none of the matched files exports. The pattern is too narrow: widen it, the key cannot be ' +
+          'generated without its table.',
+      );
+    }
+
+    if (!names.has(spec.refTable)) {
+      throw new Error(
+        `loadTables: foreign key "${spec.name}" (${entry.file}) references "${spec.refTable}", ` +
+          `which none of the matched files exports. ${tooNarrow}`,
       );
     }
   }
@@ -77,16 +96,18 @@ function assertSelfContained(found: readonly Found[]): void {
 
 /**
  * Finds the files, imports them and collects every exported table, sorted by
- * table name so that the result does not depend on where a table lives.
+ * table name so that the result does not depend on where a table lives, then
+ * every exported `defineForeignKey` key, sorted by table and key name. Both go
+ * into the one list `generateMigration` takes.
  *
- * A table exported from several files, a barrel for instance, is counted once.
+ * A table or a key exported from several files, a barrel for instance, is counted once.
  * Two different tables with the same database name are an error, as they are for
  * `generateMigration`, but the message names the files.
  */
 export async function loadTables(
   patterns: string | readonly string[],
   options: LoadTablesOptions = {},
-): Promise<AnyTable[]> {
+): Promise<SchemaObject[]> {
   const list = typeof patterns === 'string' ? [patterns] : [...patterns];
   const cwd = options.cwd ?? process.cwd();
   const quoted = list.map(pattern => `"${pattern}"`).join(', ');
@@ -108,19 +129,30 @@ export async function loadTables(
     );
   }
 
-  const found: Found[] = [];
-  const byTable = new Set<AnyTable>();
-  const byName = new Map<string, Found>();
+  const found: Found<AnyTable>[] = [];
+  const foreignKeys: Found<ForeignKey>[] = [];
+  const seen = new Set<unknown>();
+  const byName = new Map<string, Found<AnyTable>>();
 
   for (const file of files) {
     const module = await importFile(file);
 
     for (const [key, value] of Object.entries(module)) {
-      if (!isTable(value) || byTable.has(value)) {
+      if (seen.has(value)) {
         continue;
       }
 
-      byTable.add(value);
+      if (isForeignKey(value)) {
+        seen.add(value);
+        foreignKeys.push({ value, file, key });
+        continue;
+      }
+
+      if (!isTable(value)) {
+        continue;
+      }
+
+      seen.add(value);
       const name = value.spec.name;
       const previous = byName.get(name);
 
@@ -131,7 +163,7 @@ export async function loadTables(
         );
       }
 
-      const entry: Found = { table: value, file, key };
+      const entry: Found<AnyTable> = { value, file, key };
       byName.set(name, entry);
       found.push(entry);
     }
@@ -144,9 +176,22 @@ export async function loadTables(
     );
   }
 
-  assertSelfContained(found);
+  assertSelfContained(found, foreignKeys);
 
-  return found.toSorted((a, b) => (a.table.spec.name < b.table.spec.name ? -1 : 1)).map(entry => entry.table);
+  const tables = found.map(entry => entry.value).toSorted((a, b) => compareNames(a.spec.name, b.spec.name));
+  const keys = foreignKeys
+    .map(entry => entry.value)
+    .toSorted((a, b) => compareNames(a.table.spec.name, b.table.spec.name) || compareNames(a.spec.name, b.spec.name));
+
+  return [...tables, ...keys];
+}
+
+function compareNames(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+
+  return a < b ? -1 : 1;
 }
 
 /** `cwd` in the same shape as the paths in the rest of the messages. */

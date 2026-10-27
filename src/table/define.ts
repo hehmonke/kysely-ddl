@@ -106,15 +106,18 @@ export interface TableSpec {
     /** Built and dropped with `CONCURRENTLY`, in a migration of its own. */
     readonly concurrently: boolean;
   }[];
-  readonly foreignKeys: readonly {
-    readonly name: string;
-    readonly columns: readonly string[];
-    readonly refTable: string;
-    readonly refColumns: readonly string[];
-    readonly onDelete: ReferentialAction | undefined;
-    readonly onUpdate: ReferentialAction | undefined;
-  }[];
+  readonly foreignKeys: readonly ForeignKeySpec[];
   readonly checks: readonly { readonly name: string; readonly expression: Sql }[];
+}
+
+/** A foreign key with its names resolved: database names on both sides. */
+export interface ForeignKeySpec {
+  readonly name: string;
+  readonly columns: readonly string[];
+  readonly refTable: string;
+  readonly refColumns: readonly string[];
+  readonly onDelete: ReferentialAction | undefined;
+  readonly onUpdate: ReferentialAction | undefined;
 }
 
 export interface Table<
@@ -189,7 +192,24 @@ export function ref<T extends AnyTable>(
   table: T,
   columns: readonly (keyof T['_']['columns'] & string)[],
 ): Reference {
+  assertTable(table, 'ref');
+
   return { table, columns };
+}
+
+/**
+ * Compiled to CommonJS or bundled, two modules that import each other see one of
+ * them `undefined` while it loads (native ES modules throw on the access instead),
+ * and without this the error is a bare "cannot read properties of undefined".
+ */
+function assertTable(table: unknown, where: string): void {
+  if (!isTable(table)) {
+    throw new Error(
+      `${where}: expected a table, got ${table === undefined ? 'undefined' : typeof table}. ` +
+        'A table imported from a module that is still loading is undefined: two tables with foreign keys ' +
+        'on each other cannot import each other, declare one of the keys with defineForeignKey instead.',
+    );
+  }
 }
 
 export interface TableOptions<
@@ -462,28 +482,7 @@ export function defineTable<TName extends string, TCols extends Record<string, A
   });
 
   // ── foreign keys ───────────────────────────────────────────────────────────
-  const foreignKeys = (options.foreignKeys ?? []).map(foreignKey => {
-    const fkColumns = toDb(foreignKey.columns);
-
-    return {
-      name: resolveName(foreignKey.name, fkColumns, AUTO_NAMES.foreignKey, 'foreign key'),
-      columns: fkColumns,
-      refTable: foreignKey.references.table.spec.name,
-      refColumns: foreignKey.references.columns.map(key => {
-        const target = foreignKey.references.table.spec.columns.find(c => c.key === key);
-
-        if (target === undefined) {
-          throw new Error(
-            `${name}: table ${foreignKey.references.table.spec.name} has no column ${key}`,
-          );
-        }
-
-        return target.name;
-      }),
-      onDelete: foreignKey.onDelete,
-      onUpdate: foreignKey.onUpdate,
-    };
-  });
+  const foreignKeys = (options.foreignKeys ?? []).map(foreignKey => resolveForeignKey(name, columns, foreignKey));
 
   // ── checks: automatic ones from enum() first, then the declared ones ───────
   const checks: { name: string; expression: Sql }[] = [];
@@ -514,10 +513,68 @@ export function defineTable<TName extends string, TCols extends Record<string, A
     checks.push({ name: checkName, expression });
   }
 
-  // ── name uniqueness ────────────────────────────────────────────────────────
-  // Constraint names are unique within a table, index names within the schema.
-  // The overlap is checked only where it really conflicts: PRIMARY KEY and
-  // UNIQUE create an index under their own name.
+  const spec: TableSpec = { name, columns, primaryKey, uniques, indexes, foreignKeys, checks };
+  assertUniqueNames(spec);
+
+  // the brand is not part of `Table`: it is how `isTable` recognizes the object,
+  // not something to write by hand, so it stays out of the public type
+  return { _: { name, columns: {} as ResolveColumns<TCols> }, spec, [TABLE_BRAND]: true } as Table<
+    TName,
+    ResolveColumns<TCols>
+  >;
+}
+
+/**
+ * A foreign key of `table` resolved against its columns: property names become
+ * database names on both sides, and a missing name is built. Shared by
+ * `defineTable` and `defineForeignKey`, so the two produce the same spec.
+ */
+function resolveForeignKey<TCols>(
+  table: string,
+  columns: readonly ResolvedColumn[],
+  foreignKey: ForeignKeyDef<TCols>,
+): ForeignKeySpec {
+  const fkColumns = foreignKey.columns.map(key => {
+    const column = columns.find(c => c.key === key);
+
+    if (column === undefined) {
+      throw new Error(`${table}: no column ${key}`);
+    }
+
+    return column.name;
+  });
+
+  if (foreignKey.name !== undefined) {
+    assertIdentifier(foreignKey.name, `${table}: foreign key`);
+  }
+
+  const target = foreignKey.references.table.spec;
+
+  return {
+    name: foreignKey.name ?? autoName([table, ...fkColumns], AUTO_NAMES.foreignKey),
+    columns: fkColumns,
+    refTable: target.name,
+    refColumns: foreignKey.references.columns.map(key => {
+      const column = target.columns.find(c => c.key === key);
+
+      if (column === undefined) {
+        throw new Error(`${table}: table ${target.name} has no column ${key}`);
+      }
+
+      return column.name;
+    }),
+    onDelete: foreignKey.onDelete,
+    onUpdate: foreignKey.onUpdate,
+  };
+}
+
+/**
+ * Constraint names are unique within a table, index names within the schema.
+ * The overlap is checked only where it really conflicts: PRIMARY KEY and
+ * UNIQUE create an index under their own name.
+ */
+function assertUniqueNames(spec: TableSpec): void {
+  const { name, primaryKey, uniques, indexes, foreignKeys, checks } = spec;
   const constraintNames = new Map<string, string>();
 
   const claim = (kind: string, constraintName: string) => {
@@ -570,13 +627,70 @@ export function defineTable<TName extends string, TCols extends Record<string, A
     }
     indexNames.add(index.name);
   }
+}
 
-  const spec: TableSpec = { name, columns, primaryKey, uniques, indexes, foreignKeys, checks };
+// ── defineForeignKey ─────────────────────────────────────────────────────────
 
-  // the brand is not part of `Table`: it is how `isTable` recognizes the object,
-  // not something to write by hand, so it stays out of the public type
-  return { _: { name, columns: {} as ResolveColumns<TCols> }, spec, [TABLE_BRAND]: true } as Table<
-    TName,
-    ResolveColumns<TCols>
-  >;
+/** A foreign key declared outside its table, see `defineForeignKey`. */
+export interface ForeignKey {
+  /** The table the key belongs to, the one with the referencing columns. */
+  readonly table: AnyTable;
+  readonly spec: ForeignKeySpec;
+}
+
+/** Anything the generator takes: tables and the foreign keys declared outside them. */
+export type SchemaObject = AnyTable | ForeignKey;
+
+/** The mark `isForeignKey` looks for; `Symbol.for` for the reason `TABLE_BRAND` is. */
+const FOREIGN_KEY_BRAND = Symbol.for('kysely-ddl.foreignKey');
+
+/** Is this a foreign key from `defineForeignKey`? By the brand, as `isTable`. */
+export function isForeignKey(value: unknown): value is ForeignKey {
+  return (
+    typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[FOREIGN_KEY_BRAND] === true
+  );
+}
+
+/**
+ * A foreign key of `table` declared outside `defineTable`, for two tables with
+ * keys on each other. Their modules cannot import each other: one of them would
+ * see the other `undefined` while it loads, and TypeScript could not infer either
+ * type. So one key stays in its table and the other is declared in a third
+ * module that imports both:
+ *
+ * ```ts
+ * export const memberFractionFk = defineForeignKey(fractionMemberTable, {
+ *   columns: ['fractionId'],
+ *   references: ref(fractionTable, ['id']),
+ *   onDelete: 'cascade',
+ * });
+ * ```
+ *
+ * It takes the options of a `foreignKeys` entry, and the generator merges it
+ * into its table: the snapshot and the SQL are the ones the same key inside
+ * `defineTable` gives, so moving a key between the two is not a change.
+ */
+export function defineForeignKey<T extends AnyTable>(
+  table: T,
+  options: ForeignKeyDef<T['_']['columns']>,
+): ForeignKey {
+  assertTable(table, 'defineForeignKey');
+  const spec = resolveForeignKey(table.spec.name, table.spec.columns, options);
+  // a clash with the table's own names is caught here, where the key is declared;
+  // one between two keys declared outside the table, by the generator
+  withForeignKeys(table.spec, [spec]);
+
+  return { table, spec, [FOREIGN_KEY_BRAND]: true } as ForeignKey;
+}
+
+/** The table with foreign keys declared outside it added, checked as `defineTable` checks its own. */
+export function withForeignKeys(spec: TableSpec, foreignKeys: readonly ForeignKeySpec[]): TableSpec {
+  if (foreignKeys.length === 0) {
+    return spec;
+  }
+
+  const merged = { ...spec, foreignKeys: [...spec.foreignKeys, ...foreignKeys] };
+  assertUniqueNames(merged);
+
+  return merged;
 }
