@@ -74,21 +74,26 @@ const int8AsBigInt: pg.CustomTypesConfig = {
 /**
  * The same test set runs through both dialects, pg and Bun.SQL. `createBigint` is
  * the same driver told to return int8 as BigInt, for the `{ bigint: true }` types.
+ * `day` is a calendar day as the driver reads a `date`: pg at local midnight,
+ * Bun.SQL at midnight UTC.
  */
 const dialects: {
   readonly label: string;
   readonly create: (url: string) => Dialect;
   readonly createBigint: (url: string) => Dialect;
+  readonly day: (year: number, month: number, date: number) => Date;
 }[] = [
   {
     label: 'PostgresDialect over pg',
     create: url => new PostgresDialect({ pool: new pg.Pool({ connectionString: url }) }),
     createBigint: url => new PostgresDialect({ pool: new pg.Pool({ connectionString: url, types: int8AsBigInt }) }),
+    day: (year, month, date) => new Date(year, month - 1, date),
   },
   {
     label: 'BunSqlDialect over Bun.SQL',
     create: url => new BunSqlDialect(url),
     createBigint: url => new BunSqlDialect(url, { bigint: true }),
+    day: (year, month, date) => new Date(Date.UTC(year, month - 1, date)),
   },
 ];
 
@@ -442,6 +447,55 @@ for (const { label, create, createBigint } of dialects) {
       } finally {
         await db.destroy();
       }
+    });
+  });
+}
+
+// ── date: Date from both drivers, each at its own midnight ───────────────────
+
+const holidayTable = defineTable({
+  name: 'holiday',
+  columns: t => ({
+    id: t.integer().generatedAlwaysAsIdentity(),
+    day: t.date().notNull(),
+    observed: t.date().array(),
+    added: t.date().notNull().default(sql`current_date`),
+  }),
+  primaryKey: { columns: ['id'] },
+});
+
+type HolidayDB = InferKyselyDatabase<{ holidayTable: typeof holidayTable }>;
+
+for (const { label, create, day } of dialects) {
+  describeDb(`${label}: date`, () => {
+    let db: Kysely<HolidayDB>;
+
+    beforeEach(async () => {
+      db = new Kysely<HolidayDB>({ dialect: create(tempDb.url) });
+      addMigration(dir, 'init', [holidayTable]);
+      await migrateToLatest({ db, migrationsDir: dir });
+    });
+
+    afterEach(async () => {
+      await db.destroy();
+    });
+
+    test('a Date at the midnight the driver reads goes in as that day and comes back equal', async () => {
+      const observed = [day(2024, 3, 15), day(2024, 12, 31)];
+      await db.insertInto('holiday').values({ day: day(2024, 2, 29), observed }).execute();
+
+      const row = await db.selectFrom('holiday').selectAll().executeTakeFirstOrThrow();
+      expect(row.day).toEqual(day(2024, 2, 29));
+      expect(row.observed).toEqual(observed);
+      expect(row.added).toBeInstanceOf(Date);
+
+      const text = await sql<{ day: string; observed: string }>`select day::text, observed::text from holiday`.execute(db);
+      expect(text.rows).toEqual([{ day: '2024-02-29', observed: '{2024-03-15,2024-12-31}' }]);
+
+      // what was read is written back as the same day
+      await db.updateTable('holiday').set({ day: row.day, observed: row.observed }).execute();
+      const again = await sql<{ day: string; observed: string }>`select day::text, observed::text from holiday`.execute(db);
+      expect(again.rows).toEqual(text.rows);
     });
   });
 }

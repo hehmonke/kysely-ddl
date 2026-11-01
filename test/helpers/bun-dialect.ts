@@ -110,7 +110,11 @@ class BunSqlDriver implements Driver {
 
 const WRITE_COMMANDS = new Set(['INSERT', 'UPDATE', 'DELETE', 'MERGE']);
 
-/** The way `pg` does it: array -> literal, objects inside -> JSON, null -> NULL. */
+/**
+ * The way `pg` does it: array -> literal, objects inside -> JSON, null -> NULL.
+ * A Date goes in as ISO 8601 in UTC, so a `date[]` gets the UTC day, the same
+ * day `Bun.SQL` writes for a single Date.
+ */
 function encodeParameter(value: unknown): unknown {
   if (!Array.isArray(value)) {
     return value;
@@ -120,6 +124,10 @@ function encodeParameter(value: unknown): unknown {
     value.map(element => {
       if (element === null || element === undefined) {
         return null;
+      }
+
+      if (element instanceof Date) {
+        return element.toISOString();
       }
 
       return typeof element === 'object' ? JSON.stringify(element) : String(element);

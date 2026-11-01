@@ -122,7 +122,7 @@ A hybrid: columns as chains, everything else as a declarative block.
 
 | | |
 |---|---|
-| column types | `t.uuid` `t.varchar({ length })` `t.text` `t.smallint` `t.integer` (alias `t.int`) `t.bigint` `t.boolean` `t.numeric({ precision, scale })` `t.doublePrecision` `t.timestamp({ withTimezone, precision })` `t.jsonb` `t.enum([...])` |
+| column types | `t.uuid` `t.varchar({ length })` `t.text` `t.smallint` `t.integer` (alias `t.int`) `t.bigint` `t.boolean` `t.numeric({ precision, scale })` `t.doublePrecision` `t.date` `t.timestamp({ withTimezone, precision })` `t.jsonb` `t.enum([...])` |
 | modifiers | `.notNull()` `.default(v \| sql)` `.array()` `.$type<T>()`; on a timestamp `.defaultNow()`, on a smallint, integer or bigint `.generatedAlwaysAsIdentity()` and `.generatedByDefaultAsIdentity()` |
 | table | `primaryKey` (composite too), `uniques`, `indexes` (unique, partial via `where`, a method via `using`, keys with an operator class, a sort order or an expression, built online via `concurrently`), `foreignKeys` (`onDelete` / `onUpdate`), `checks`; names are optional everywhere |
 | expressions | Kysely's `` sql`...` ``: `${c.column}` is the column, `${value}` an inlined literal, fragments nest; `inArray(c.status, [...])` |
@@ -157,9 +157,35 @@ config second: `t.varchar('title', { length: 200 })`.
 TypeScript value types match what the driver returns, without modes like
 `bigint({ mode })`: `bigint` and `numeric` are strings (no precision loss),
 `smallint`, `integer` and `doublePrecision` are numbers, `text` is a string,
-`timestamp` is `Date`, `jsonb` is `unknown`. A driver told to return int8 as
-`bigint` is matched by the `bigint: true` infer option, see "Types for Kysely".
-For another type use `$type<T>()` and convert on your side.
+`date` and `timestamp` are `Date`, `jsonb` is `unknown`. A driver told to
+return int8 as `bigint` is matched by the `bigint: true` infer option, see "Types
+for Kysely". For another type use `$type<T>()` and convert on your side.
+
+### `date()`
+
+A calendar day without a time, postgres `date`. It is `Date` in the types because
+both drivers return a `Date`, but not the same one:
+
+| | `pg` | `Bun.SQL` |
+|---|---|---|
+| `'2024-03-15'` reads as | midnight in the process time zone | midnight UTC, `2024-03-15T00:00:00.000Z` |
+| a `Date` is written as | its day in the process time zone | its day in UTC |
+
+Each driver writes back what it read as the same day, so a value that only goes
+through the database is safe. A `Date` built in code has to be at the driver's
+midnight: `new Date(Date.UTC(2024, 2, 15))` for `Bun.SQL`,
+`new Date(2024, 2, 15)` for `pg`. Take the day with `getUTCDate()` and friends
+under `Bun.SQL`, with `getDate()` under `pg`. With the process in `TZ=UTC` the two
+agree. To work with `'YYYY-MM-DD'` strings instead, tell the driver to leave oid
+1082 (and 1182 for `date[]`) unparsed, `types.setTypeParser(1082, v => v)` in
+`pg`, and type the column `t.date().$type<string>()`.
+
+The default for today is `` .default(sql`current_date`) ``; `defaultNow()` is for
+timestamps only. A `timestamp` column changed to `date()` becomes
+`ALTER COLUMN ... TYPE date`, and postgres takes the day in the session's
+`TimeZone`: under anything but UTC a value stored at midnight UTC can land on the
+previous day. Run such a migration with `TimeZone` set to UTC, or edit the
+generated statement to `TYPE date USING (... AT TIME ZONE 'UTC')::date`.
 
 ### `enum([...])`
 
@@ -629,6 +655,7 @@ What the checks showed on `pg` 8.23 and `Bun.SQL` 1.4 (parameters via Kysely):
 | array of objects -> `jsonb[]` | ok | error: arrays are not encoded | `jsonbArray([...])` |
 | array of strings -> `varchar[]` | ok, including commas, quotes, `null` | error: elements joined with commas | a Bun dialect must encode arrays into literals itself, as the test one does |
 | `numeric` = 0 on read | `'0.00'` | `'0'` | compare as numbers |
+| `date` on read | `Date`, local midnight | `Date`, midnight UTC | see `date()` above |
 | `int8` on read | `'42'`; `42n` with a parser for oid 20, and 1016 for `int8[]` | `'42'`; `42n` with `{ bigint: true }` | the `bigint: true` infer option once the driver returns `bigint` |
 
 Reading jsonb, JSON arrays, `jsonb[]` and `varchar[]` yields parsed JS values

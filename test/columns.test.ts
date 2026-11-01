@@ -25,6 +25,13 @@ describe('column builders: one builder per column type', () => {
     expect(t.doublePrecision().spec).toMatchObject({ kind: 'doublePrecision', sqlType: 'double precision' });
   });
 
+  test('date is a plain column: no defaultNow(), no identity', () => {
+    expect(t.date().spec).toMatchObject({ kind: 'date', sqlType: 'date' });
+    expect(t.date('day').array().spec).toMatchObject({ kind: 'date', sqlType: 'date', name: 'day', array: true });
+    expect(t.date()).not.toBeInstanceOf(TimestampColumnBuilder);
+    expect('defaultNow' in t.date()).toBe(false);
+  });
+
   test('int() is integer() under its short name', () => {
     expect(t.int).toBe(t.integer);
     expect(t.int('n').spec).toEqual(t.integer('n').spec);
