@@ -4,6 +4,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-01
+
 ### Added
 
 - Column type `t.date()`: postgres `date`, a calendar day without a time,
