@@ -406,6 +406,31 @@ export type NewColumnTypeTests = [
   Expect<Equal<Simplify<Insertable<CounterTable>>, { id?: number; kind: number; label: string; ratio?: number | null }>>,
 ];
 
+// ── date ─────────────────────────────────────────────────────────────────────
+
+const holidayTable = defineTable({
+  name: 'holiday',
+  columns: t => ({
+    day: t.date().notNull(),
+    observed: t.date().array(),
+    added: t.date().notNull().default(sql`current_date`),
+    label: t.date().$type<string>(),
+  }),
+});
+
+type HolidayTable = InferKyselyTable<typeof holidayTable>;
+
+defineTable({
+  name: 'holiday',
+  // @ts-expect-error defaultNow() exists on timestamp columns only
+  columns: t => ({ day: t.date().defaultNow() }),
+});
+
+export type DateColumnTests = [
+  Expect<Equal<Simplify<Selectable<HolidayTable>>, { day: Date; observed: Date[] | null; added: Date; label: string | null }>>,
+  Expect<Equal<Simplify<Insertable<HolidayTable>>, { day: Date; observed?: Date[] | null; added?: Date; label?: string | null }>>,
+];
+
 // ── index keys ───────────────────────────────────────────────────────────────
 
 defineTable({

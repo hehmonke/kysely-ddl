@@ -4,6 +4,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), ver
 
 ## [Unreleased]
 
+### Added
+
+- Column type `t.date()`: postgres `date`, a calendar day without a time,
+  `Date` in the types. Both drivers return a `Date`, at different midnights:
+  `Bun.SQL` at midnight UTC, `pg` at midnight in the process time zone. The
+  README covers building and reading such values under each driver, keeping
+  them as `'YYYY-MM-DD'` strings, and converting an existing `timestamp`
+  column, where postgres takes the day in the session's `TimeZone`.
+
 ## [0.9.1] — 2026-10-27
 
 ### Fixed

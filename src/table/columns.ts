@@ -3,7 +3,7 @@
  *
  * The set of types is what application schemas actually need:
  * uuid / varchar / text / smallint / integer / bigint / boolean / numeric /
- * double precision / timestamp / jsonb, plus `enum`, a varchar with an
+ * double precision / date / timestamp / jsonb, plus `enum`, a varchar with an
  * automatic check constraint. Each type is a file
  * in `column-types/`; adding a type is a new file there plus a line in
  * `columnBuilders`.
@@ -48,6 +48,7 @@ export type ColumnKind =
   | 'boolean'
   | 'numeric'
   | 'doublePrecision'
+  | 'date'
   | 'timestamp'
   | 'jsonb';
 

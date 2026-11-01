@@ -188,6 +188,14 @@ ALTER TABLE "t" ALTER COLUMN "a" DROP IDENTITY;
 `);
   });
 
+  test('a timestamp turned into a date is a plain TYPE change', () => {
+    const v1 = buildSnapshot([defineTable({ name: 't', columns: t => ({ a: t.timestamp({ withTimezone: true }).notNull() }) })]);
+    const v2 = buildSnapshot([defineTable({ name: 't', columns: t => ({ a: t.date().notNull() }) })]);
+
+    expect(v2.tables[0]?.columns[0]?.type).toBe('date');
+    expect(renderChanges(diffSnapshots(v1, v2))).toBe('ALTER TABLE "t" ALTER COLUMN "a" TYPE date;\n');
+  });
+
   test('switching an identity between ALWAYS and BY DEFAULT is SET GENERATED, not ADD', () => {
     const always = buildSnapshot([defineTable({ name: 't', columns: t => ({ a: t.int().generatedAlwaysAsIdentity() }) })]);
     const byDefault = buildSnapshot([defineTable({ name: 't', columns: t => ({ a: t.int().generatedByDefaultAsIdentity() }) })]);

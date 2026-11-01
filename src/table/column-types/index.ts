@@ -11,6 +11,7 @@
  */
 import { bigint } from './bigint.ts';
 import { boolean } from './boolean.ts';
+import { date } from './date.ts';
 import { doublePrecision } from './double-precision.ts';
 import { enumColumn } from './enum.ts';
 import { integer } from './integer.ts';
@@ -25,6 +26,7 @@ import { varchar } from './varchar.ts';
 export const columnBuilders = {
   bigint,
   boolean,
+  date,
   doublePrecision,
   integer,
   /** `integer()` under its short postgres name; the column type is `integer` either way. */
